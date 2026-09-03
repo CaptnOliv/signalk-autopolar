@@ -225,6 +225,52 @@ assert.doesNotThrow(() => tick2(), 'un arbre cassé ne fait pas remonter d\'exce
 assert.ok(logged > 0, "l'erreur est signalée et non avalée en silence");
 p2.stop();
 
+// ── Conversion du compte-tours ────────────────────────────────────────────
+// La spec SignalK met `revolutions` en hertz, d'où le facteur 60 par défaut.
+// Mais une passerelle qui publie autre chose donne un affichage faux sans que
+// rien ne proteste : on vérifie donc que la valeur BRUTE est exposée telle
+// quelle (c'est elle qui permet de diagnostiquer), que le facteur est
+// réellement appliqué, et que la plus forte valeur vue est retenue même si
+// personne ne regardait l'écran à ce moment-là.
+{
+  const engineApp = Object.assign({}, fakeApp, {
+    getSelfPath: (path) =>
+      path === 'propulsion' ? { Engine1: { revolutions: node(30), state: node('started') } } : fakeApp.getSelfPath(path),
+  });
+  const live = (options) => {
+    const pl = require('../index.js')(engineApp);
+    let t = null;
+    global.setInterval = (fn) => {
+      t = fn;
+      return 0;
+    };
+    pl.start(options);
+    global.setInterval = realSetInterval;
+    let handler = null;
+    pl.registerWithRouter({
+      get: (route, fn) => {
+        if (route === '/api/live') handler = fn;
+      },
+      post: () => {},
+    });
+    t();
+    let payload = null;
+    handler({ query: {} }, { json: (x) => (payload = x) });
+    pl.stop();
+    return payload;
+  };
+
+  const std = live({});
+  assert.strictEqual(std.values.rpmRaw, 30, 'la valeur brute est exposée sans retouche');
+  assert.strictEqual(std.values.rpm, 1800, '30 Hz font 1800 tr/min');
+  assert.ok(std.engine.witness && std.engine.witness.raw === 30, 'la plus forte valeur brute est retenue');
+  assert.strictEqual(std.engine.factor, 60);
+
+  const raw = live({ engineRpmFactor: 1 });
+  assert.strictEqual(raw.values.rpm, 30, 'le facteur est réellement appliqué');
+  assert.strictEqual(raw.values.rpmRaw, 30, 'et il ne touche pas au brut');
+}
+
 plugin.stop();
 Date.now = realNow;
 fs.rmSync(dataDir, { recursive: true, force: true });
