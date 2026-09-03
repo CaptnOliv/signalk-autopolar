@@ -1,0 +1,281 @@
+/* Palette : rampes ordinales validées (validate_palette.js, mode sombre,
+   surface #1a1a19). Les forces de vent sont une grandeur ORDONNÉE, pas des
+   catégories : une seule teinte, du sombre (petit temps) au clair (vent
+   fort). Cinq marches au maximum — au-delà, deux marches voisines ne se
+   distinguent plus, et c'est la table qui prend le relais. */
+:root {
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #222220;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --hairline: rgba(255, 255, 255, 0.1);
+
+  --good: #0ca30c;
+  --warning: #fab219;
+  --critical: #d03b3b;
+
+  /* Rampe principale (bleu) — vent faible → vent fort */
+  --w1: #184f95;
+  --w2: #256abf;
+  --w3: #3987e5;
+  --w4: #6da7ec;
+  --w5: #b7d3f6;
+  /* Rampe de comparaison (orange) — même ordre */
+  --c1: #8a3712;
+  --c2: #c4501d;
+  --c3: #e06a35;
+  --c4: #ee8a63;
+  --c5: #f8bfa9;
+
+  --sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 16px;
+}
+
+h1 { font-size: 17px; margin: 0; font-weight: 600; }
+h2 { font-size: 13px; margin: 0 0 10px; font-weight: 600; color: var(--ink-2); letter-spacing: 0.02em; }
+h2 .sub { color: var(--muted); font-weight: 400; }
+
+header {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--hairline);
+}
+header .sub { color: var(--muted); font-size: 12px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+
+/* ── Bandeau d'état en direct ──────────────────────────────────────────── */
+.livehead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.state {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 600; padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--hairline); background: var(--surface-2);
+}
+.state .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.state.rec { color: var(--good); border-color: rgba(12, 163, 12, 0.45); }
+.state.rec .dot { background: var(--good); animation: pulse 1.6s infinite; }
+.state.wait { color: var(--warning); border-color: rgba(250, 178, 25, 0.35); }
+.state.wait .dot { background: var(--warning); }
+.state.off { color: var(--ink-2); }
+/* Santé des entrées — volontairement distincte de l'état de collecte : une
+   collecte à l'arrêt au mouillage n'est pas une panne de données. */
+.state.ok { color: var(--good); border-color: rgba(12, 163, 12, 0.45); }
+.state.ok .dot { background: var(--good); }
+.state.bad { color: var(--critical); border-color: rgba(208, 59, 59, 0.5); }
+.state.bad .dot { background: var(--critical); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.progress { flex: 1; min-width: 160px; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.progress > i { display: block; height: 100%; background: var(--good); border-radius: 3px; transition: width 0.4s; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
+.tile { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+.tile .k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.tile .v { font-size: 19px; font-variant-numeric: tabular-nums; }
+.tile .u { font-size: 11px; color: var(--muted); margin-left: 2px; }
+.tile .v { color: var(--ink); }
+.tile .age { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tile.stale .v { color: var(--muted); }
+.tile.stale .k em { color: var(--warning); font-style: normal; }
+
+.hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+
+/* ── Contrôles ─────────────────────────────────────────────────────────── */
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.group { display: flex; align-items: center; gap: 6px; }
+.group > label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.seg { display: inline-flex; background: var(--surface-2); border-radius: 7px; padding: 2px; }
+.seg button {
+  background: none; border: 0; color: var(--ink-2); font: inherit; font-size: 12px;
+  padding: 4px 10px; border-radius: 5px; cursor: pointer;
+}
+.seg button[aria-pressed='true'] { background: #34343100; box-shadow: inset 0 0 0 1px var(--hairline); background-color: #343431; color: var(--ink); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  background: var(--surface-2); border: 1px solid transparent; color: var(--ink-2);
+  font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 999px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.chip[aria-pressed='true'] { color: var(--ink); border-color: var(--hairline); background: #343431; }
+.chip .swatch { width: 9px; height: 9px; border-radius: 2px; }
+.chip .n { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+.chip.dim { opacity: 0.45; }
+
+button.act {
+  background: var(--surface-2); border: 1px solid var(--hairline); color: var(--ink-2);
+  font: inherit; font-size: 12px; padding: 5px 11px; border-radius: 7px; cursor: pointer;
+}
+button.act:hover { color: var(--ink); }
+button.act.danger { color: #e79a9a; border-color: rgba(208, 59, 59, 0.4); }
+button.act:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Diagramme ─────────────────────────────────────────────────────────── */
+.plot { position: relative; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+.gridline { fill: none; stroke: var(--grid); stroke-width: 1; }
+.axisline { stroke: var(--axis); stroke-width: 1; }
+.axistext { fill: var(--muted); font-size: 10px; }
+.curve { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.curve.ghost { stroke-dasharray: none; opacity: 0.9; }
+.pt { stroke: var(--surface); stroke-width: 2; }
+.cloud { opacity: 0.5; }
+.hit { fill: transparent; cursor: pointer; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; font-size: 12px; color: var(--ink-2); }
+.legend .item { display: inline-flex; align-items: center; gap: 6px; }
+.legend .line { width: 16px; height: 2px; border-radius: 1px; }
+
+.tooltip {
+  position: absolute; pointer-events: none; z-index: 5;
+  background: #26262400; background-color: #262624; border: 1px solid var(--hairline);
+  border-radius: 8px; padding: 7px 10px; font-size: 12px; color: var(--ink);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); white-space: nowrap; opacity: 0; transition: opacity 0.1s;
+}
+.tooltip .k { color: var(--muted); }
+.tooltip b { font-variant-numeric: tabular-nums; }
+
+/* ── Table ─────────────────────────────────────────────────────────────── */
+.tablewrap { overflow: auto; max-height: 460px; }
+table { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; width: 100%; }
+th, td { padding: 3px 8px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--surface); }
+td.a { text-align: left; color: var(--ink-2); }
+td.v { cursor: pointer; }
+td.v:hover { background: #2b2b28; }
+td.n0 { color: #4a4a46; }
+td.ov { color: var(--warning); }
+td .n { color: var(--muted); font-size: 10px; margin-left: 4px; }
+
+/* ── Panneau d'inspection ──────────────────────────────────────────────── */
+.pointlist { max-height: 260px; overflow: auto; margin-top: 10px; }
+.pointlist .row {
+  display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center;
+  padding: 4px 2px; border-bottom: 1px solid var(--grid); font-size: 12px;
+}
+.pointlist .row.ex { opacity: 0.4; text-decoration: line-through; }
+.pointlist .meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+.pointlist .sp { font-variant-numeric: tabular-nums; }
+
+.msg { font-size: 12px; color: var(--muted); margin-left: 8px; }
+.empty { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+
+/* Cibles VMG : une ligne par force plutôt qu'une grille de tuiles — on les
+   lit en colonne, près contre portant. */
+table.targets td.t { text-align: left; color: var(--ink); }
+table.targets td.a { white-space: nowrap; }
+table.targets .k { color: var(--muted); }
+table.targets .vmg { color: var(--ink-2); margin-left: 6px; }
+table.targets .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+
+/* Ce que le filtre voit de la fenêtre en cours. Dérive et dispersion sont
+   affichées côte à côte parce que c'est leur écart qui explique une décision :
+   « ça oscille beaucoup mais l'allure tient » est un point retenu. */
+.metrics { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 12px; color: var(--ink-2); }
+.metrics .metric b { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: .05em; margin-right: 4px; }
+.metrics .k { color: var(--muted); }
+
+#stateWhy:not(:empty) { margin: -4px 0 10px; }
+
+/* ── Étiquette d'un groupe de chips ─────────────────────────────────────── */
+.chiplabel {
+  font-size: 11px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.05em; align-self: center; margin-right: 4px;
+}
+
+/* ── File d'alertes en attente ──────────────────────────────────────────── */
+#ntfyBox .warn { color: var(--warning); font-size: 12px; }
+#ntfyBox .k { color: var(--muted); font-size: 12px; }
+
+/* ── Voisinage de la VMG optimale ───────────────────────────────────────── */
+/* La ligne de l'optimum est mise en avant et les autres se lisent par rapport
+   à elle : c'est un écart qu'on regarde ici, pas une valeur absolue. */
+.vmghead { font-size: 12px; font-weight: 600; color: var(--ink-2); margin: 16px 0 8px; }
+.vmghead .sub { color: var(--muted); font-weight: 400; }
+.vmgcols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+.vmgblock h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 6px; }
+table.around { width: 100%; font-size: 12px; }
+table.around td, table.around th { padding: 3px 4px; font-variant-numeric: tabular-nums; text-align: right; }
+table.around th { color: var(--muted); font-weight: 400; font-size: 10px; text-transform: uppercase; }
+table.around td.a, table.around th.a { text-align: left; color: var(--muted); }
+table.around tr.best td { color: var(--ink); background: rgba(255, 255, 255, 0.04); }
+table.around tr.best td.a { color: var(--good); }
+table.around tr.gain td.a { color: var(--warning); }
+@media (max-width: 900px) { .vmgcols { grid-template-columns: 1fr; } }
+
+/* ── Diagnostic du capteur de vitesse ───────────────────────────────────── */
+.verdict { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.verdict .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.verdict.bad { color: var(--critical); }
+.verdict.bad .dot { background: var(--critical); }
+.verdict.ok { color: var(--good); }
+.verdict.ok .dot { background: var(--good); }
+.verdict.wait { color: var(--warning); }
+.verdict.wait .dot { background: var(--warning); }
+ul.ev { margin: 12px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 12px; line-height: 1.7; }
+ul.ev b { color: var(--ink); font-weight: 600; }
+table.speedo { width: 100%; font-size: 12px; margin-top: 10px; }
+table.speedo td, table.speedo th { padding: 3px 8px; font-variant-numeric: tabular-nums; text-align: right; }
+table.speedo th { color: var(--muted); font-weight: 400; font-size: 10px; text-transform: uppercase; }
+table.speedo td.a, table.speedo th.a { text-align: left; }
+table.speedo td.k { color: var(--muted); }
+code { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--ink-2); }
+
+/* ── Bandeau de qualité ─────────────────────────────────────────────────── */
+.qualitybar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  font-size: 12px; color: var(--ink-2); margin-bottom: 14px;
+}
+.qualitybar .k { color: var(--muted); }
+.qualitybar b { color: var(--ink); font-weight: 600; }
+.qualitybar .hint { width: 100%; margin-top: 2px; }
+
+/* Un conseil d'action se distingue d'un constat : encadré, pas noyé. */
+.advice {
+  margin-top: 12px; padding: 10px 12px; font-size: 12px; line-height: 1.6;
+  color: var(--ink-2); background: var(--surface-2); border-radius: 8px;
+  border-left: 3px solid var(--warning);
+}
+.advice b { color: var(--ink); }
+
+/* ── Voilure a posteriori ───────────────────────────────────────────────── */
+.seglist { margin-top: 10px; display: flex; flex-direction: column; gap: 2px; }
+.seg-row { border-radius: 8px; padding: 6px 8px; background: var(--surface-2); }
+.seg-row.open { background: #2a2a27; }
+.seg-row.applied { border-left: 3px solid var(--good); }
+.seg-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.seg-head .t { font-variant-numeric: tabular-nums; color: var(--ink); }
+.seg-head .k { color: var(--muted); }
+.seg-head .cur { color: var(--ink-2); margin-left: auto; }
+.seg-head .act { margin-left: 8px; }
+.seg-row .why { display: block; font-size: 11px; color: var(--warning); margin-top: 3px; }
+.seg-edit { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 8px; }
+.seg-edit .seg button { font-size: 11px; padding: 2px 7px; }
+.seg-edit input[type='datetime-local'] {
+  background: var(--surface); border: 1px solid var(--hairline); color: var(--ink);
+  font: inherit; font-size: 12px; padding: 3px 6px; border-radius: 6px;
+}

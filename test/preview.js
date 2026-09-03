@@ -1,0 +1,98 @@
+// Aperçu local de la webapp, avec une polaire simulée d'Océanis 48 : sert les
+// mêmes routes que SignalK monterait, sur http://localhost:8099/plugins/signalk-autopolar/
+// Sert à regarder le rendu sans avoir à redémarrer le serveur du bord.
+const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const dataDir = process.env.PREVIEW_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'polaire-preview-'));
+const fakeApp = { getDataDirPath: () => dataDir, setPluginStatus: () => {}, error: console.error, getSelfPath: () => null };
+const realSetInterval = global.setInterval;
+global.setInterval = () => 0;
+const plugin = require('../index.js')(fakeApp);
+plugin.start({});
+global.setInterval = realSetInterval;
+
+// Polaire de référence grossière : vitesse = f(TWS, TWA), avec le creux du
+// près et l'affaissement au vent arrière.
+function ref(tws, twa) {
+  const a = (twa * Math.PI) / 180;
+  const base = Math.min(9.2, 1.45 * Math.pow(tws, 0.62));
+  const shape = Math.pow(Math.sin(Math.min(a, Math.PI - 0.25 * a) * 0.92), 0.75);
+  const upwindPenalty = twa < 40 ? Math.max(0, (twa - 25) / 15) : 1;
+  const deep = twa > 150 ? 0.86 + 0.14 * ((180 - twa) / 30) : 1;
+  return Math.max(0, base * shape * upwindPenalty * deep);
+}
+
+let seed = 42;
+const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+const noise = (a) => (rnd() * 2 - 1) * a;
+
+const runsFile = path.join(dataDir, 'runs.jsonl');
+if (!fs.existsSync(runsFile)) {
+  const out = [];
+  let t = Date.parse('2026-09-02T12:00:00Z');
+  const sails = [{ main: 'full', head: 'genoa' }, { main: '1ris', head: 'genoa' }];
+  for (let i = 0; i < 900; i++) {
+    const tws = [5, 7, 9, 11, 13, 15, 17][Math.floor(rnd() * 7)] + noise(1);
+    const twa = (30 + rnd() * 150) * (rnd() > 0.5 ? 1 : -1);
+    const stw = ref(tws, Math.abs(twa)) + noise(0.35);
+    if (stw < 0.5) continue;
+    const sog = stw + noise(0.3) + 0.15;
+    const awaRad = Math.atan2(tws * Math.sin((twa * Math.PI) / 180), tws * Math.cos((twa * Math.PI) / 180) + stw);
+    const aws = Math.hypot(tws * Math.sin((twa * Math.PI) / 180), tws * Math.cos((twa * Math.PI) / 180) + stw);
+    t += 90000;
+    out.push({
+      id: t, ts: t, n: 60,
+      sog: +sog.toFixed(2), stw: +stw.toFixed(2),
+      twa: +twa.toFixed(1), tws: +tws.toFixed(2),
+      awa: +((awaRad * 180) / Math.PI).toFixed(1), aws: +aws.toFixed(2),
+      hdg: +(rnd() * 360).toFixed(1), cog: 0, roll: twa > 0 ? 12 : -12,
+      engineSource: 'rpm', sail: sails[i % 20 === 0 ? 1 : 0],
+      metrics: { hdgSpread: 4, twsSpread: 1.1 },
+    });
+  }
+  // Deux valeurs franchement aberrantes, pour vérifier que le tri se voit.
+  out[100].sog = 14.9; out[100].stw = 14.2;
+  fs.writeFileSync(runsFile, out.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  plugin.stop();
+  plugin.start({});
+}
+
+const routes = { GET: {}, POST: {} };
+plugin.registerWithRouter({ get: (p, h) => (routes.GET[p] = h), post: (p, h) => (routes.POST[p] = h) });
+
+const STATIC = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'application/javascript'], '/style.css': ['style.css', 'text/css'] };
+
+http
+  .createServer((req, res) => {
+    const u = new URL(req.url, 'http://x');
+    const p = u.pathname.replace('/plugins/signalk-autopolar', '') || '/';
+    if (STATIC[p]) {
+      const [file, type] = STATIC[p];
+      res.setHeader('Content-Type', type);
+      return res.end(fs.readFileSync(path.join(__dirname, '..', 'public', file)));
+    }
+    const h = routes[req.method] && routes[req.method][p];
+    if (!h) {
+      res.statusCode = 404;
+      return res.end('nope');
+    }
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      const query = Object.fromEntries(u.searchParams);
+      const body = raw ? JSON.parse(raw) : {};
+      h(
+        { query, body },
+        {
+          type: (t) => res.setHeader('Content-Type', t.includes('/') ? t : 'text/plain'),
+          json: (v) => res.end(JSON.stringify(v)),
+          send: (v) => res.end(v),
+          end: () => res.end(),
+        }
+      );
+    });
+  })
+  .listen(8099, () => console.log('apercu : http://localhost:8099/plugins/signalk-autopolar/  (donnees dans ' + dataDir + ')'));

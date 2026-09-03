@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Polar</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header>
+  <h1>Polar</h1>
+  <span class="sub" id="headSub">automatic learning</span>
+</header>
+
+<!-- La qualité de la polaire, avant tout le reste : c'est elle qui dit si on
+     peut déjà s'en servir, et sinon ce qu'il reste à naviguer. -->
+<div class="qualitybar" id="quality"></div>
+
+<!-- L'état en direct passe avant tout le reste : en nav, la question n'est pas
+     « à quoi ressemble la polaire » mais « est-ce que ça enregistre, et sinon
+     pourquoi ». -->
+<section class="card">
+  <div class="livehead">
+    <span class="state off" id="state"><span class="dot"></span><span id="stateLabel">…</span></span>
+    <span class="state" id="inputs"><span class="dot"></span><span>…</span></span>
+    <div class="progress" title="Progress of the current steady state"><i id="progress" style="width:0"></i></div>
+    <span class="msg" id="progressLabel"></span>
+  </div>
+  <div class="hint" id="stateWhy"></div>
+  <div class="tiles" id="tiles"></div>
+  <div class="metrics" id="metrics"></div>
+  <div class="hint" id="liveHint"></div>
+  <div class="row-actions" id="ntfyBox"></div>
+  <div class="row-actions">
+    <div class="group"><label>Mainsail</label><div class="seg" id="segMain"></div></div>
+    <div class="group"><label>Headsail</label><div class="seg" id="segHead"></div></div>
+    <div class="group" id="reefGroup"><label>Reef</label><div class="seg" id="segReef"></div></div>
+    <span class="msg" id="sailMsg"></span>
+  </div>
+</section>
+
+<div class="layout">
+  <div>
+    <section class="card">
+      <div class="controls" id="controls">
+        <div class="group">
+          <label>Boat speed</label>
+          <div class="seg" data-key="speed">
+            <button data-v="sog">SOG</button><button data-v="stw">STW</button><button data-v="stwc" title="STW corrected by the measured speed-sensor curve">STW corr.</button>
+          </div>
+        </div>
+        <div class="group">
+          <label>Wind</label>
+          <div class="seg" data-key="wind">
+            <button data-v="true">true</button><button data-v="apparent">apparent</button>
+          </div>
+        </div>
+        <div class="group">
+          <label>Value</label>
+          <div class="seg" data-key="stat">
+            <button data-v="mean">mean</button><button data-v="median">median</button>
+            <button data-v="p90">p90</button><button data-v="max">max</button>
+          </div>
+        </div>
+        <div class="group">
+          <label>Tacks</label>
+          <div class="seg" data-key="tack">
+            <button data-v="merged">merged</button><button data-v="split">split</button>
+          </div>
+        </div>
+        <div class="group">
+          <label>Compare</label>
+          <div class="seg" data-key="compare">
+            <button data-v="none">off</button><button data-v="speed">SOG↔STW</button><button data-v="wind">true↔apparent</button>
+          </div>
+        </div>
+        <div class="group">
+          <label>Curve</label>
+          <div class="seg" data-key="smooth">
+            <button data-v="on">smoothed</button><button data-v="off">raw</button>
+          </div>
+        </div>
+        <div class="group">
+          <label>Scatter</label>
+          <div class="seg" data-key="cloud">
+            <button data-v="on">on</button><button data-v="off">off</button>
+          </div>
+        </div>
+      </div>
+      <!-- Le filtre de voilure est ce qui donne son sens au marquage : sans
+           lui on enregistre une étiquette qu'on ne peut jamais relire. -->
+      <div class="chips" id="sailChips" style="margin-top:12px"></div>
+      <div class="chips" id="binChips" style="margin-top:12px"></div>
+    </section>
+
+    <section class="card">
+      <h2>Diagram <span class="sub" id="plotSub"></span></h2>
+      <div class="plot">
+        <svg id="polar" viewBox="0 0 720 720" role="img" aria-label="Polar diagram of boat speed"></svg>
+        <div class="tooltip" id="tip"></div>
+      </div>
+      <div class="legend" id="legend"></div>
+    </section>
+
+    <!-- Diagnostic du capteur de vitesse. Il vit sous le diagramme parce que
+         c'est lui qui décide laquelle des courbes SOG / STW est crédible. -->
+    <section class="card">
+      <h2>Speed sensor check <span class="sub">— is STW telling the truth?</span></h2>
+      <div id="speedo"><div class="empty">Not enough data yet.</div></div>
+    </section>
+  </div>
+
+  <div>
+    <section class="card">
+      <h2>VMG targets <span class="sub">— the angle that makes the most ground, not the most knots</span></h2>
+      <div id="targets"></div>
+      <div id="vmgAround"></div>
+    </section>
+
+    <section class="card" id="inspectCard">
+      <h2>Inspect <span class="sub" id="inspectSub">— click a cell in the diagram or the table</span></h2>
+      <div id="inspect"><div class="empty">No cell selected.</div></div>
+    </section>
+
+    <!-- On change de voilure quand il faut, pas quand c'est commode pour
+         l'application. Cette carte rattrape l'écart après coup. -->
+    <section class="card">
+      <h2>Sail plan over time <span class="sub">— fix it after the fact</span></h2>
+      <div id="sailHistory"><div class="empty">Loading…</div></div>
+    </section>
+
+    <section class="card">
+      <h2>Table</h2>
+      <div class="tablewrap" id="tableWrap"></div>
+      <div class="hint">Click a value to inspect it · double-click to override it by hand.</div>
+    </section>
+
+    <section class="card">
+      <h2>Export &amp; maintenance</h2>
+      <div class="row-actions">
+        <button class="act" id="btnPol">Download .pol</button>
+        <button class="act" id="btnCsv">CSV</button>
+        <button class="act" id="btnJson">JSON backup</button>
+        <button class="act" id="btnRaw">Raw log (.jsonl)</button>
+      </div>
+      <div class="row-actions">
+        <button class="act" id="btnRebuildDry">Dry-run a replay</button>
+        <button class="act" id="btnRebuild">Replay the raw log</button>
+        <button class="act danger" id="btnResetOv">Clear edits</button>
+        <button class="act danger" id="btnResetRuns">Clear points</button>
+        <span class="msg" id="maintMsg"></span>
+      </div>
+      <div class="hint" id="diskHint"></div>
+    </section>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

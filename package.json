@@ -1,0 +1,49 @@
+{
+  "name": "signalk-autopolar",
+  "version": "0.3.0",
+  "description": "Learns your boat's polar by watching how she is actually sailed — never under engine, never at anchor. Web app, SOG/STW and true/apparent comparison, speed-sensor diagnostic, .pol export.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test/geom.test.js && node test/gate.test.js && node test/polar.test.js && node test/speedo.test.js && node test/sailchange.test.js && node test/notify.test.js && node test/smoke.js"
+  },
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-category-utility",
+    "signalk-webapp",
+    "polar",
+    "polars",
+    "performance",
+    "sailing",
+    "vmg",
+    "routing",
+    "stw",
+    "calibration"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "files": [
+    "index.js",
+    "lib/",
+    "public/",
+    "test/",
+    "README.md",
+    "LICENSE",
+    "icon.png"
+  ],
+  "author": "Olivier Brial",
+  "signalk": {
+    "appIcon": "./icon.png",
+    "displayName": "Autopolar"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CaptnOliv/signalk-autopolar.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CaptnOliv/signalk-autopolar/issues"
+  },
+  "homepage": "https://github.com/CaptnOliv/signalk-autopolar#readme"
+}
