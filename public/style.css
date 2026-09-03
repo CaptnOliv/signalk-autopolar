@@ -65,7 +65,26 @@ header .sub { color: var(--muted); font-size: 12px; }
 }
 
 .layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr); gap: 14px; align-items: start; }
-@media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+
+/* Sur téléphone, tout retombe en une colonne — et l'ordre de lecture n'est
+   plus celui de deux colonnes côte à côte. On veut d'abord ce qu'on regarde en
+   nav (le diagramme, les cibles), puis ce qu'on inspecte, et seulement ensuite
+   les outils de fond (voilure, diagnostic capteur, exports).
+   `display: contents` fait disparaître les deux colonnes de la mise en page :
+   les cartes deviennent enfants directs, et `order` les remet dans le bon
+   sens sans toucher au HTML, qui reste optimal pour le grand écran. */
+@media (max-width: 1000px) {
+  .layout { display: flex; flex-direction: column; }
+  .layout > div { display: contents; }
+  #cardControls { order: 1; }
+  #cardDiagram  { order: 2; }
+  #cardVmg      { order: 3; }
+  #cardInspect  { order: 4; }
+  #cardTable    { order: 5; }
+  #cardSail     { order: 6; }
+  #cardSpeedo   { order: 7; }
+  #cardExport   { order: 8; }
+}
 
 /* ── Bandeau d'état en direct ──────────────────────────────────────────── */
 .livehead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -266,7 +285,8 @@ code { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color
 .seglist { margin-top: 10px; display: flex; flex-direction: column; gap: 2px; }
 .seg-row { border-radius: 8px; padding: 6px 8px; background: var(--surface-2); }
 .seg-row.open { background: #2a2a27; }
-.seg-row.applied { border-left: 3px solid var(--good); }
+.seg-row.fixed { border-left: 3px solid var(--good); }
+.seg-head .mix { color: var(--warning); font-size: 11px; margin-left: 6px; }
 .seg-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .seg-head .t { font-variant-numeric: tabular-nums; color: var(--ink); }
 .seg-head .k { color: var(--muted); }

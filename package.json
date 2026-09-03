@@ -29,6 +29,7 @@
     "lib/",
     "public/",
     "test/",
+    "docs/",
     "README.md",
     "LICENSE",
     "icon.png"
@@ -36,7 +37,12 @@
   "author": "Olivier Brial",
   "signalk": {
     "appIcon": "./icon.png",
-    "displayName": "Autopolar"
+    "displayName": "Autopolar",
+    "screenshots": [
+      "./docs/overview.png",
+      "./docs/speed-sensor.png",
+      "./docs/sail-plan.png"
+    ]
   },
   "repository": {
     "type": "git",

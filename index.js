@@ -54,6 +54,9 @@ module.exports = function (app) {
   let sailFile = null;
   let startedAt = null;
   let rpmEverSeen = false;
+  // La plus forte valeur brute de `revolutions` jamais observée, conservée
+  // pour diagnostiquer l'échelle de la source (voir readEngine).
+  let engineWitness = null;
   let buffer = [];
   let live = { reason: 'starting', ts: Date.now() };
   let counters = { samples: 0, accepted: 0, rejected: {} };
@@ -134,6 +137,13 @@ module.exports = function (app) {
         type: 'number',
         title: 'Engine considered stopped below this RPM',
         default: 50,
+      },
+      engineRpmFactor: {
+        type: 'number',
+        title: 'Multiplier from propulsion.*.revolutions to RPM',
+        description:
+          'The SignalK spec says revolutions are in hertz, so 60 converts to RPM — that is the default. Some gateways publish RPM straight into that path, which then reads 60x too high; others publish a raw pulse rate. The live panel shows the raw value next to the converted one, so you can read the true ratio off the display while the engine runs and set this once. Collection is unaffected either way: any positive multiplier still tells a running engine from a stopped one.',
+        default: 60,
       },
       autostateFallback: {
         type: 'boolean',
@@ -254,6 +264,8 @@ module.exports = function (app) {
   function readEngine() {
     const prop = app.getSelfPath('propulsion');
     let rpm = null;
+    let rpmRaw = null;
+    let rpmSource = null;
     let rpmFresh = false;
     let rpmAge = null;
     let state = null;
@@ -264,14 +276,36 @@ module.exports = function (app) {
         const eng = prop[key];
         if (!eng || typeof eng !== 'object') continue;
         if (eng.revolutions && typeof eng.revolutions.value === 'number') {
-          const r = eng.revolutions.value * 60; // SignalK : tours/seconde
+          // La spec SignalK dit que `revolutions` est en Hz (tours/seconde),
+          // d'où le facteur 60 par défaut. Mais rien n'oblige la source à la
+          // respecter, et une passerelle qui publie directement des tr/min
+          // donne un affichage 60 fois trop grand sans que rien ne proteste.
+          // Le facteur est donc réglable — et surtout, on garde la valeur
+          // BRUTE : sans elle, impossible de savoir de combien on se trompe.
+          const raw = eng.revolutions.value;
+          const r = raw * opts.engineRpmFactor;
           const age = eng.revolutions.timestamp ? Date.now() - Date.parse(eng.revolutions.timestamp) : null;
           const fresh = age == null || age < opts.engineStaleMs;
           if (fresh) rpmEverSeen = true;
           if (rpm == null || r > rpm) {
             rpm = r;
+            rpmRaw = raw;
+            rpmSource = eng.revolutions.$source || null;
             rpmFresh = fresh;
             rpmAge = age;
+          }
+          // Le moteur tourne rarement pendant qu'on regarde l'écran. On retient
+          // donc la plus forte valeur brute jamais vue, avec sa source et son
+          // heure : c'est la mesure qui permettra de trancher le facteur, sans
+          // avoir à rallumer le moteur exprès pour observer.
+          if (raw > 0 && (!engineWitness || raw > engineWitness.raw)) {
+            engineWitness = {
+              raw,
+              at: Date.now(),
+              source: eng.revolutions.$source || null,
+              path: `propulsion.${key}.revolutions`,
+              units: (eng.revolutions.meta && eng.revolutions.meta.units) || null,
+            };
           }
         }
         if (eng.state && typeof eng.state.value === 'string') {
@@ -286,7 +320,7 @@ module.exports = function (app) {
         }
       }
     }
-    return { rpm, rpmFresh, rpmAge, state, stateFresh, stateAge };
+    return { rpm, rpmRaw, rpmSource, rpmFresh, rpmAge, state, stateFresh, stateAge };
   }
 
   function snapshot() {
@@ -338,6 +372,8 @@ module.exports = function (app) {
       })(),
       rot: rot.v,
       rpm: eng.rpm,
+      rpmRaw: eng.rpmRaw,
+      rpmSource: eng.rpmSource,
       engineState: eng.state,
       navState: navStateNode ? navStateNode.value : null,
       rpmEverSeen,
@@ -524,12 +560,15 @@ module.exports = function (app) {
         roll: snap.roll,
         pitch: snap.pitch,
         rpm: snap.rpm,
+        rpmRaw: snap.rpmRaw,
+        rpmSource: snap.rpmSource,
         navState: snap.navState,
         twSource: snap.twSource,
       },
       fresh: snap.fresh,
       ages: snap.ages,
       seaStateThresholds: { moderate: opts.seaStateModerateDeg, rough: opts.seaStateRoughDeg },
+      engine: { factor: opts.engineRpmFactor, witness: engineWitness },
       counters,
       idle: {
         sailSecs,
@@ -967,6 +1006,7 @@ module.exports = function (app) {
         minAwsKn: 1.5,
         minTwaDeg: 25,
         engineOffRpm: 50,
+        engineRpmFactor: 60,
         autostateFallback: true,
         staleMs: 6000,
         engineStaleMs: 180000,

@@ -8,6 +8,8 @@ Built-in web app: live recording state, polar diagram, SOG against STW and
 true against apparent wind, scatter of the underlying measurements, outlier
 editing, speed-sensor diagnostic, and `.pol` / CSV export.
 
+![The web app under way](docs/overview.png)
+
 ---
 
 ## Why this one
@@ -125,6 +127,8 @@ concluded:
 When both agree the verdict is solid; when they disagree the plugin says so
 rather than picking one.
 
+![Speed sensor check](docs/speed-sensor.png)
+
 If the verdict is the sensor, you get an empirical correction table (no model
 is imposed — a paddlewheel rarely errs linearly, which is exactly what a
 multi-point sensor table is for), a fourth boat-speed reading in the diagram
@@ -230,6 +234,8 @@ whole stretch of time, after the event, in two ways:
   through the residual, not raw speed, is what stops "we reefed" being confused
   with "the wind dropped". Long gaps in the record are flagged too: you rarely
   sail 45 minutes without a single point by accident.
+
+![Sail plan over time](docs/sail-plan.png)
 
 Three limits, worth stating rather than discovering:
 

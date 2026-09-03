@@ -3,13 +3,23 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Polar</title>
+<title>Autopolar</title>
+<!-- Ajout à l'écran d'accueil. Le nom court et l'icône comptent autant que le
+     reste : au mouillage on ouvre l'app depuis l'écran d'accueil, pas depuis
+     un onglet perdu. -->
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#0b111a" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Autopolar" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<link rel="icon" href="icon.png" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
 <header>
-  <h1>Polar</h1>
+  <h1>Autopolar</h1>
   <span class="sub" id="headSub">automatic learning</span>
 </header>
 
@@ -42,7 +52,7 @@
 
 <div class="layout">
   <div>
-    <section class="card">
+    <section class="card" id="cardControls">
       <div class="controls" id="controls">
         <div class="group">
           <label>Boat speed</label>
@@ -94,7 +104,7 @@
       <div class="chips" id="binChips" style="margin-top:12px"></div>
     </section>
 
-    <section class="card">
+    <section class="card" id="cardDiagram">
       <h2>Diagram <span class="sub" id="plotSub"></span></h2>
       <div class="plot">
         <svg id="polar" viewBox="0 0 720 720" role="img" aria-label="Polar diagram of boat speed"></svg>
@@ -103,40 +113,41 @@
       <div class="legend" id="legend"></div>
     </section>
 
-    <!-- Diagnostic du capteur de vitesse. Il vit sous le diagramme parce que
-         c'est lui qui décide laquelle des courbes SOG / STW est crédible. -->
-    <section class="card">
+    <!-- Sur grand écran il équilibre la colonne de gauche, sous le diagramme.
+         Sur téléphone il redescend juste avant les exports (voir style.css) :
+         c'est un diagnostic, on le consulte après avoir lu la polaire. -->
+    <section class="card" id="cardSpeedo">
       <h2>Speed sensor check <span class="sub">— is STW telling the truth?</span></h2>
       <div id="speedo"><div class="empty">Not enough data yet.</div></div>
     </section>
   </div>
 
   <div>
-    <section class="card">
+    <section class="card" id="cardVmg">
       <h2>VMG targets <span class="sub">— the angle that makes the most ground, not the most knots</span></h2>
       <div id="targets"></div>
       <div id="vmgAround"></div>
     </section>
 
-    <section class="card" id="inspectCard">
+    <section class="card" id="cardInspect">
       <h2>Inspect <span class="sub" id="inspectSub">— click a cell in the diagram or the table</span></h2>
       <div id="inspect"><div class="empty">No cell selected.</div></div>
     </section>
 
-    <!-- On change de voilure quand il faut, pas quand c'est commode pour
-         l'application. Cette carte rattrape l'écart après coup. -->
-    <section class="card">
-      <h2>Sail plan over time <span class="sub">— fix it after the fact</span></h2>
-      <div id="sailHistory"><div class="empty">Loading…</div></div>
-    </section>
-
-    <section class="card">
+    <section class="card" id="cardTable">
       <h2>Table</h2>
       <div class="tablewrap" id="tableWrap"></div>
       <div class="hint">Click a value to inspect it · double-click to override it by hand.</div>
     </section>
 
-    <section class="card">
+    <!-- On change de voilure quand il faut, pas quand c'est commode pour
+         l'application. Cette carte rattrape l'écart après coup. -->
+    <section class="card" id="cardSail">
+      <h2>Sail plan over time <span class="sub">— fix it after the fact</span></h2>
+      <div id="sailHistory"><div class="empty">Loading…</div></div>
+    </section>
+
+    <section class="card" id="cardExport">
       <h2>Export &amp; maintenance</h2>
       <div class="row-actions">
         <button class="act" id="btnPol">Download .pol</button>

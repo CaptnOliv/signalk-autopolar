@@ -7,12 +7,47 @@ const os = require('os');
 const path = require('path');
 
 const dataDir = process.env.PREVIEW_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'polaire-preview-'));
-const fakeApp = { getDataDirPath: () => dataDir, setPluginStatus: () => {}, error: console.error, getSelfPath: () => null };
+// Un bateau plausible sous voile, pour que le panneau « en direct » montre
+// quelque chose. Sans lui l'aperçu s'ouvre sur des tuiles vides et un état
+// « starting up » — ce qui ne dit rien de ce que l'app fait réellement en nav,
+// et fait de mauvaises captures d'écran.
+const D2R = Math.PI / 180;
+const KN = 1 / 1.94384;
+let tick = 0;
+const node = (v) => ({ value: v, timestamp: new Date().toISOString(), $source: 'preview' });
+function fakeBoat(p) {
+  // Tout oscille un peu : un voilier ne tient jamais rien de constant, et
+  // c'est justement ce que le filtre est censé tolérer.
+  const w = (a) => Math.sin(tick / 7) * a;
+  if (p === 'propulsion') return { Engine1: { revolutions: node(0), state: node('stopped') } };
+  const map = {
+    'navigation.speedOverGround': (7.4 + w(0.35)) * KN,
+    'navigation.speedThroughWater': (8.1 + w(0.3)) * KN,
+    'environment.wind.speedApparent': (12.4 + w(0.8)) * KN,
+    'environment.wind.angleApparent': (78 + w(7)) * D2R,
+    'environment.wind.speedTrue': (16.2 + w(0.9)) * KN,
+    'environment.wind.angleTrueWater': (118 + w(6)) * D2R,
+    'navigation.headingTrue': (212 + w(4)) * D2R,
+    'navigation.courseOverGroundTrue': (214 + w(4)) * D2R,
+    'navigation.rateOfTurn': w(0.4) * D2R,
+    'navigation.state': 'sailing',
+    'navigation.attitude': { roll: (12 + w(3)) * D2R, pitch: w(2.4) * D2R, yaw: null },
+  };
+  return p in map ? node(map[p]) : null;
+}
+const fakeApp = { getDataDirPath: () => dataDir, setPluginStatus: () => {}, error: console.error, debug: () => {}, getSelfPath: fakeBoat };
 const realSetInterval = global.setInterval;
-global.setInterval = () => 0;
+let captured = null;
+global.setInterval = (fn) => {
+  captured = fn;
+  return 0;
+};
 const plugin = require('../index.js')(fakeApp);
 plugin.start({});
 global.setInterval = realSetInterval;
+// On fait tourner la boucle du plugin pour de vrai : c'est elle qui remplit
+// l'état en direct, la fenêtre en cours et les métriques.
+if (captured) realSetInterval(() => { tick++; captured(); }, 1000);
 
 // Polaire de référence grossière : vitesse = f(TWS, TWA), avec le creux du
 // près et l'affaissement au vent arrière.

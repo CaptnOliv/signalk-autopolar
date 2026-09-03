@@ -124,11 +124,12 @@ async function refreshLive() {
   // l'écran, et « c'est grisé alors que la valeur est bonne » n'est pas
   // diagnosticable.
   const age = (ms) => (ms == null ? '' : ms < 3000 ? '' : ms < 90000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60000)} min`);
-  const tile = (k, val, unit, fresh, ms) => {
+  const tile = (k, val, unit, fresh, ms, extra) => {
     const a = age(ms);
     return `<div class="tile${fresh === false ? ' stale' : ''}">
       <div class="k">${k}${fresh === false ? ' <em>stale</em>' : ''}</div>
       <div class="v">${val}<span class="u">${unit || ''}</span></div>
+      ${extra ? `<div class="age">${extra}</div>` : ''}
       ${a ? `<div class="age">${a} ago</div>` : ''}</div>`;
   };
   const g = live.ages || {};
@@ -141,7 +142,10 @@ async function refreshLive() {
     tile('AWS', fmt(v.aws, 1), 'kn', f.aws, g.aws),
     tile('Heel', fmt(v.roll, 0), '°'),
     tile('Sea', seaLabel(live.metrics && live.metrics.pitchSpread, live.seaStateThresholds), ''),
-    tile('Engine', v.rpm == null ? '—' : fmt(v.rpm, 0), 'rpm', f.rpm, g.rpm),
+    // La valeur brute est écrite sous la valeur convertie : c'est le seul
+    // moyen de voir qu'une passerelle ne respecte pas l'unité annoncée, et de
+    // lire le bon facteur au lieu de le deviner.
+    tile('Engine', v.rpm == null ? '—' : fmt(v.rpm, 0), 'rpm', f.rpm, g.rpm, v.rpmRaw == null ? '' : `raw ${fmt(v.rpmRaw, 2)}`),
     tile('Since restart', (live.counters && live.counters.accepted) || 0, 'pts'),
     tile('Polar total', state.quality ? state.quality.points : '—', 'pts'),
   ].join('');
@@ -168,6 +172,15 @@ async function refreshLive() {
     );
   if (v.twSource && v.twSource !== 'signalk') parts.push(`true wind ${v.twSource} (the server does not publish it)`);
   if (v.navState) parts.push(`navigation.state: ${v.navState}`);
+  // Le témoin moteur : la plus forte valeur brute jamais vue. Il ne sert que
+  // si la conversion est douteuse, donc on ne l'affiche qu'à ce moment-là.
+  const eng = live.engine;
+  if (eng && eng.witness && eng.witness.raw * eng.factor > 6000)
+    parts.push(
+      `⚠ engine reads ${fmt(eng.witness.raw * eng.factor, 0)} rpm from a raw value of ${fmt(eng.witness.raw, 2)} ` +
+        `(${eng.witness.source || 'unknown source'}, ×${eng.factor}) — if that is not what the tachometer showed, ` +
+        `set the multiplier to (real rpm) / ${fmt(eng.witness.raw, 2)}`
+    );
   if (live.counters && live.counters.errors) parts.push(`⚠ ${live.counters.errors} error(s): ${live.counters.lastError}`);
   if (live.counters && live.counters.rejected) {
     const top = Object.entries(live.counters.rejected).sort((a, b) => b[1] - a[1]).slice(0, 3);
@@ -709,46 +722,51 @@ function renderSailHistory() {
     el.innerHTML = '<div class="empty">No points to work with yet.</div>';
     return;
   }
-  const bTs = new Set(d.boundaries.map((b) => b.ts));
+  const ranges = sailHist.ranges || [];
+
   const rows = d.segments
     .map((seg, i) => {
       const b = d.boundaries.find((x) => x.ts === seg.from);
       const why = !b
         ? ''
         : b.kind === 'gap'
-        ? `<span class="why">${b.gapMin} min gap before</span>`
-        : `<span class="why">${b.step > 0 ? '+' : ''}${fmt(b.step, 2)} kn vs polar${
-            b.heelStep == null ? '' : ` · heel ${b.heelStep > 0 ? '+' : ''}${fmt(b.heelStep, 1)}°`
-          }</span>`;
-      // Un segment peut contenir plusieurs voilures (c'est justement ce qu'on
-      // vient corriger) : on montre la dominante et on compte le reste plutôt
-      // que d'étaler une liste illisible.
+        ? `${b.gapMin} min gap`
+        : `${b.step > 0 ? '+' : ''}${fmt(b.step, 2)} kn vs polar${
+            b.heelStep == null ? '' : `, heel ${b.heelStep > 0 ? '+' : ''}${fmt(b.heelStep, 1)}°`
+          }`;
+
+      // Une correction appliquée se lit SUR la ligne qu'elle corrige. La lister
+      // ailleurs en plus obligeait à faire le rapprochement de tête, pour deux
+      // fois la même information.
+      const cov = ranges.findIndex((r) => r.from <= seg.from && r.to >= seg.to);
+
+      // Un segment peut contenir plusieurs voilures — c'est justement ce qu'on
+      // vient corriger. On le dit en points, pas en nombre de configurations :
+      // « 4 +1 other » à côté de « 6 pts » ne s'additionne pas et fait douter.
       const sails = seg.sails || [];
-      const cur = !sails.length
-        ? '—'
-        : `${sailLabel(sails[0])} <span class="k">${sails[0].n}</span>` +
-          (sails.length > 1 ? ` <span class="k">+${sails.length - 1} other</span>` : '');
+      const total = sails.reduce((a, x) => a + x.n, 0);
+      const plan = !sails.length
+        ? '<span class="k">not set</span>'
+        : sails.length === 1
+        ? sailLabel(sails[0])
+        : `${sailLabel(sails[0])} <span class="mix">mixed · ${sails[0].n} of ${total} pts</span>`;
+
       const open = sailHist.editing === i;
-      return `<div class="seg-row${open ? ' open' : ''}">
+      return `<div class="seg-row${open ? ' open' : ''}${cov >= 0 ? ' fixed' : ''}">
         <div class="seg-head">
           <span class="t">${fmtTime(seg.from, true)} → ${fmtTime(seg.to)}</span>
           <span class="k">${seg.n} pts</span>
-          <span class="cur">${cur}</span>
-          <button class="act" data-seg="${i}">${open ? 'cancel' : 'set…'}</button>
+          <span class="cur">${plan}</span>
+          ${
+            cov >= 0
+              ? `<button class="act danger" data-del="${cov}">undo</button>`
+              : `<button class="act" data-seg="${i}">${open ? 'cancel' : 'set…'}</button>`
+          }
         </div>
-        ${why}
+        ${why || sails.length > 1 ? `<div class="why">${[why, sails.length > 1 ? sails.slice(1).map((x) => `${x.n} × ${sailLabel(x)}`).join(', ') : ''].filter(Boolean).join(' · ')}</div>` : ''}
         ${open ? sailEditor() : ''}
       </div>`;
     })
-    .join('');
-
-  const applied = (sailHist.ranges || [])
-    .map(
-      (r, i) =>
-        `<div class="seg-row applied"><div class="seg-head"><span class="t">${fmtTime(r.from, true)} → ${fmtTime(r.to)}</span>
-          <span class="cur">${sailLabel(r)}</span>
-          <button class="act danger" data-del="${i}">undo</button></div></div>`
-    )
     .join('');
 
   const sens = SENSITIVITY.map(
@@ -757,17 +775,14 @@ function renderSailHistory() {
 
   el.innerHTML =
     `<div class="row-actions">
-       <div class="group"><label>Suggestions</label><div class="seg" id="segSens">${sens}</div></div>
+       <div class="group"><label>Split</label><div class="seg" id="segSens">${sens}</div></div>
        <button class="act" id="btnManual">${sailHist.manual ? 'cancel' : 'enter times by hand…'}</button>
      </div>` +
     (sailHist.manual ? manualEditor() : '') +
-    `<div class="hint">Each row is a stretch of sailing. The plugin cuts them where performance stepped up or down
-      by more than the configured threshold, once wind and angle are accounted for — so it can tell you <b>when</b>
-      something changed, never <b>what</b>. A change that did not affect performance is invisible here, and a wind
-      shift can look like one. Treat them as candidates to check, and use the times you remember.</div>` +
     `<div class="seglist">${rows}</div>` +
-    (applied ? `<h3 class="vmghead">Corrections applied</h3><div class="seglist">${applied}</div>` : '') +
-    `<div class="hint">Corrections live beside the measurements, never inside them: replaying the raw log keeps them.</div>`;
+    `<div class="hint">Rows are cut where performance stepped up or down once wind and angle are accounted for,
+      so this says <b>when</b> something changed, never <b>what</b> — and a wind shift can look like a sail change.
+      Corrections sit beside the measurements, so replaying the raw log keeps them.</div>`;
 
   for (const b of el.querySelectorAll('#segSens button'))
     b.addEventListener('click', async () => {
