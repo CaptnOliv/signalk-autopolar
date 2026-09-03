@@ -1054,7 +1054,7 @@ async function refreshStatus() {
     ` · v${s.version || '?'}`;
   state.quality = s.quality || null;
   renderQuality(s.quality);
-  renderSailChips(s.sailTags || []);
+  renderSailChips(s.sailTags || [], s.disk.runCount);
 }
 
 // Un compteur de points ne dit pas si la polaire vaut quelque chose : 500
@@ -1092,7 +1092,7 @@ function renderQuality(q) {
 // Construit à partir des combinaisons RÉELLEMENT navigées, pas de la liste
 // des possibles : proposer de filtrer sur une configuration jamais utilisée
 // ne mènerait qu'à des diagrammes vides.
-function renderSailChips(tags) {
+function renderSailChips(tags, total) {
   const el = $('#sailChips');
   if (!el) return;
   if (tags.length < 2) {
@@ -1101,10 +1101,14 @@ function renderSailChips(tags) {
   }
   const active = ui.sailFilter;
   const same = (t) => active && active.main === t.main && active.head === t.head;
-  const total = tags.reduce((a, t) => a + t.n, 0);
+  // « All » veut dire « aucun filtre », donc TOUS les points — y compris ceux
+  // qui n'ont jamais reçu d'étiquette. Additionner les voilures connues
+  // donnerait un compte plus petit que le total affiché en tête, et deux
+  // chiffres qui se contredisent font douter des deux.
+  const all = total != null ? total : tags.reduce((a, t) => a + t.n, 0);
   el.innerHTML =
     '<span class="chiplabel">Sail plan</span>' +
-    `<button class="chip" data-i="-1" aria-pressed="${!active}">All<span class="n">${total}</span></button>` +
+    `<button class="chip" data-i="-1" aria-pressed="${!active}">All<span class="n">${all}</span></button>` +
     tags
       .map((t, i) => `<button class="chip" data-i="${i}" aria-pressed="${same(t)}">${sailLabel(t)}<span class="n">${t.n}</span></button>`)
       .join('');
