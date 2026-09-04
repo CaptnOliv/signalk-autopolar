@@ -25,10 +25,28 @@ const base = {
 const s = (o) => Object.assign({}, base, o, { fresh: Object.assign({}, base.fresh, (o || {}).fresh) });
 
 assert.strictEqual(classify(s(), OPTS).usable, true);
-assert.strictEqual(classify(s(), OPTS).engineSource, 'rpm');
+assert.strictEqual(classify(s(), OPTS).engineSource, 'state+rpm', 'les deux témoins sont là et concordent');
 
 // Le moteur tourne : rien à apprendre, quoi qu'en dise le reste.
 assert.strictEqual(classify(s({ rpm: 1200 }), OPTS).reason, 'motoring');
+assert.strictEqual(classify(s({ engineState: 'started' }), OPTS).reason, 'motoring');
+
+// ── Quand les deux témoins se contredisent ────────────────────────────────
+// On ne cherche pas le régime, seulement « tourne / ne tourne pas ». Un
+// `revolutions` mal mis à l'échelle par une passerelle (la spec dit des hertz,
+// rien ne l'impose) peut faire passer un moteur à l'arrêt pour un ralenti — et
+// inversement. Dans le doute on prend la lecture prudente : collecter un point
+// au moteur salit la polaire pour toujours, en rater un ne coûte que ce point.
+assert.strictEqual(classify(s({ rpm: 900, engineState: 'stopped' }), OPTS).reason, 'motoring');
+assert.strictEqual(classify(s({ rpm: 0, engineState: 'started' }), OPTS).reason, 'motoring');
+
+// Un seul témoin suffit, et la source le dit.
+const onlyState = classify(s({ rpm: null, fresh: { rpm: false } }), OPTS);
+assert.strictEqual(onlyState.usable, true);
+assert.strictEqual(onlyState.engineSource, 'state');
+const onlyRpm = classify(s({ engineState: null, fresh: { engineState: false } }), OPTS);
+assert.strictEqual(onlyRpm.usable, true);
+assert.strictEqual(onlyRpm.engineSource, 'rpm');
 
 // Le RPM n'arrive plus. autostate dit « sailing » et il a déjà vu du moteur
 // par le passé : on accepte, en traçant que la décision vient de là.

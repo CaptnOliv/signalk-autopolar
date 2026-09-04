@@ -142,7 +142,9 @@ assert.strictEqual(afterMotor, afterPort, 'un bord au moteur ne doit produire au
 // (c'est justement ce qu'on veut pouvoir réexaminer plus tard).
 const samples = fs.readFileSync(path.join(dataDir, 'samples.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
 assert.ok(samples.length > 600 && samples.length < 640, `brut = les 620 s sous voile, obtenu ${samples.length}`);
-assert.ok(!samples.some((s) => s.eng !== 'rpm'), 'toutes les décisions moteur viennent du RPM ici');
+// Le faux bord publie à la fois `revolutions` et `state`, comme la plupart des
+// installations : la décision s'appuie donc sur les deux, jamais sur autostate.
+assert.ok(!samples.some((s) => s.eng !== 'state+rpm'), 'les deux témoins moteur sont utilisés ici');
 
 // ── API ──
 const routes = {};

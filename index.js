@@ -182,6 +182,13 @@ module.exports = function (app) {
         title: 'Minimum points before a polar cell is shown',
         default: 1,
       },
+      sailHistoryDays: {
+        type: 'number',
+        title: 'Hide handled sail-plan stretches older than (days)',
+        description:
+          'A stretch you have corrected or confirmed stops asking for attention once it is this old. Without it the list only ever grows, one passage after another, and the periods that still need a decision get lost among those that do not. Nothing is deleted — a toggle brings them all back.',
+        default: 2,
+      },
       sailChangeSide: {
         type: 'number',
         title: 'Points compared each side of a candidate sail change',
@@ -463,7 +470,7 @@ module.exports = function (app) {
     if (!verdict.usable) {
       buffer = [];
       counters.rejected[verdict.reason] = (counters.rejected[verdict.reason] || 0) + 1;
-      setLive(snap, verdict.reason, null);
+      setLive(snap, verdict.reason, null, verdict);
       return;
     }
 
@@ -480,7 +487,7 @@ module.exports = function (app) {
     if (buffer.length > opts.windowS) buffer = buffer.slice(-opts.windowS);
 
     const w = assessWindow(buffer, opts);
-    setLive(snap, w.reason, w.metrics);
+    setLive(snap, w.reason, w.metrics, verdict);
     if (!w.stable) {
       if (w.reason !== 'accumulating') {
         counters.rejected[w.reason] = (counters.rejected[w.reason] || 0) + 1;
@@ -541,7 +548,7 @@ module.exports = function (app) {
     idleAlerted = true;
   }
 
-  function setLive(snap, reason, metrics) {
+  function setLive(snap, reason, metrics, verdict) {
     live = {
       ts: snap.ts,
       reason,
@@ -568,7 +575,21 @@ module.exports = function (app) {
       fresh: snap.fresh,
       ages: snap.ages,
       seaStateThresholds: { moderate: opts.seaStateModerateDeg, rough: opts.seaStateRoughDeg },
-      engine: { factor: opts.engineRpmFactor, witness: engineWitness },
+      // Ce qui compte pour la collecte n'est pas le régime moteur mais le
+      // verdict : tourne / ne tourne pas / on ne sait pas — et QUI l'a rendu.
+      // Beaucoup de bateaux n'ont aucun compte-tours numérique, et sur ceux
+      // qui en ont un la valeur peut arriver mal mise à l'échelle. Le chiffre
+      // reste disponible pour diagnostiquer, mais il n'est plus ce qu'on
+      // montre en premier.
+      engine: {
+        state: verdict && verdict.reason === 'motoring' ? 'running' : verdict && verdict.engineSource ? 'off' : 'unknown',
+        source: (verdict && verdict.engineSource) || null,
+        rpm: snap.rpm,
+        rpmRaw: snap.rpmRaw,
+        rpmSource: snap.rpmSource,
+        factor: opts.engineRpmFactor,
+        witness: engineWitness,
+      },
       counters,
       idle: {
         sailSecs,
@@ -902,7 +923,19 @@ module.exports = function (app) {
         minStepKn: Number(req.query.minStep) || opts.sailChangeMinStepKn,
       });
       // Chaque segment porte la voilure qui s'y applique aujourd'hui, pour que
-      // la webapp montre ce qu'elle va remplacer.
+      // la webapp montre ce qu'elle va remplacer — et s'il a déjà été traité,
+      // par quoi. Sans ça la liste redemande éternellement de statuer sur des
+      // périodes déjà réglées, et s'allonge d'une nav à l'autre.
+      const ov = store.overrides();
+      const covers = (r, seg) => r.from <= seg.from && r.to >= seg.to;
+      for (const seg of out.segments) {
+        const corrected = ov.sailRanges.findIndex((r) => covers(r, seg));
+        const reviewed = corrected < 0 ? ov.sailReviewed.findIndex((r) => covers(r, seg)) : -1;
+        seg.handled = corrected >= 0 ? 'corrected' : reviewed >= 0 ? 'reviewed' : null;
+        seg.handledIndex = corrected >= 0 ? corrected : reviewed >= 0 ? reviewed : null;
+        seg.ageDays = (Date.now() - seg.to) / 86400000;
+      }
+      out.hideHandledAfterDays = opts.sailHistoryDays;
       for (const seg of out.segments) {
         const inSeg = runs.filter((r) => r.ts >= seg.from && r.ts <= seg.to);
         const tally = new Map();
@@ -927,6 +960,16 @@ module.exports = function (app) {
       const b = body(req);
       const ranges = store.setSailRange({ from: b.from, to: b.to, main: b.main, head: b.head });
       res.json({ ok: true, ranges });
+    });
+
+    router.post('/api/sail-reviewed', (req, res) => {
+      const b = body(req);
+      res.json({ ok: true, reviewed: store.setSailReviewed({ from: b.from, to: b.to }) });
+    });
+
+    router.post('/api/sail-reviewed/clear', (req, res) => {
+      const b = body(req);
+      res.json({ ok: true, reviewed: store.clearSailReviewed(b.index == null ? null : Number(b.index)) });
     });
 
     router.post('/api/sail-range/clear', (req, res) => {
@@ -1015,6 +1058,7 @@ module.exports = function (app) {
         twsBins: [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 30],
         twaStep: 5,
         minSamples: 1,
+        sailHistoryDays: 2,
         sailChangeSide: 6,
         sailChangeMinStepKn: 0.5,
         seaStateModerateDeg: 3,

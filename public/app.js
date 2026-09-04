@@ -133,6 +133,12 @@ async function refreshLive() {
       ${a ? `<div class="age">${a} ago</div>` : ''}</div>`;
   };
   const g = live.ages || {};
+  const ENGINE_STATE = { running: 'running', off: 'off', unknown: '—' };
+  const ENGINE_VIA = { rpm: 'via rpm', state: 'via engine state', 'state+rpm': 'via engine state', autostate: 'via navigation.state' };
+  const engineTile = (e, fresh, ms) => {
+    if (!e) return tile('Engine', '—', '', fresh, ms);
+    return tile('Engine', ENGINE_STATE[e.state] || e.state, '', e.state === 'unknown' ? false : fresh, ms, ENGINE_VIA[e.source] || '');
+  };
   $('#tiles').innerHTML = [
     tile('SOG', fmt(v.sog, 2), 'kn', f.sog, g.sog),
     tile('STW', fmt(v.stw, 2), 'kn', f.stw, g.stw),
@@ -142,10 +148,11 @@ async function refreshLive() {
     tile('AWS', fmt(v.aws, 1), 'kn', f.aws, g.aws),
     tile('Heel', fmt(v.roll, 0), '°'),
     tile('Sea', seaLabel(live.metrics && live.metrics.pitchSpread, live.seaStateThresholds), ''),
-    // La valeur brute est écrite sous la valeur convertie : c'est le seul
-    // moyen de voir qu'une passerelle ne respecte pas l'unité annoncée, et de
-    // lire le bon facteur au lieu de le deviner.
-    tile('Engine', v.rpm == null ? '—' : fmt(v.rpm, 0), 'rpm', f.rpm, g.rpm, v.rpmRaw == null ? '' : `raw ${fmt(v.rpmRaw, 2)}`),
+    // Le verdict, pas le régime. Un compte-tours numérique est loin d'être
+    // universel, et là où il existe la valeur peut arriver mal mise à
+    // l'échelle : ce qui décide de la collecte est « tourne / ne tourne pas »,
+    // et c'est donc ça qu'on affiche, avec le témoin qui l'a tranché.
+    engineTile(live.engine, f.rpm || f.engineState, g.rpm),
     tile('Since restart', (live.counters && live.counters.accepted) || 0, 'pts'),
     tile('Polar total', state.quality ? state.quality.points : '—', 'pts'),
   ].join('');
@@ -175,11 +182,11 @@ async function refreshLive() {
   // Le témoin moteur : la plus forte valeur brute jamais vue. Il ne sert que
   // si la conversion est douteuse, donc on ne l'affiche qu'à ce moment-là.
   const eng = live.engine;
-  if (eng && eng.witness && eng.witness.raw * eng.factor > 6000)
+  if (eng && eng.source === 'autostate') parts.push('engine state inferred from navigation.state — no engine data on the bus');
+  if (eng && eng.witness)
     parts.push(
-      `⚠ engine reads ${fmt(eng.witness.raw * eng.factor, 0)} rpm from a raw value of ${fmt(eng.witness.raw, 2)} ` +
-        `(${eng.witness.source || 'unknown source'}, ×${eng.factor}) — if that is not what the tachometer showed, ` +
-        `set the multiplier to (real rpm) / ${fmt(eng.witness.raw, 2)}`
+      `engine peak seen: raw ${fmt(eng.witness.raw, 2)} → ${fmt(eng.witness.raw * eng.factor, 0)} rpm ` +
+        `(${eng.witness.source || 'unknown source'}, ×${eng.factor})`
     );
   if (live.counters && live.counters.errors) parts.push(`⚠ ${live.counters.errors} error(s): ${live.counters.lastError}`);
   if (live.counters && live.counters.rejected) {
@@ -194,6 +201,26 @@ async function refreshLive() {
   renderNtfy(live.idle && live.idle.ntfy);
 
   if (live.sail) syncSail(live.sail);
+
+  // Le vent du moment sert à choisir les forces affichées au chargement.
+  // L'état en direct et la polaire sont chargés en parallèle : selon lequel
+  // répond le premier, le choix automatique des forces pourrait se faire sans
+  // connaître le vent. On redemande donc la polaire la première fois qu'on
+  // apprend le vent, si le choix n'a pas encore pu être fait.
+  const firstWind = state.liveTws == null && v.tws != null;
+  if (v.tws != null) state.liveTws = v.tws;
+  if (firstWind && !ui.bins && state.polar) refreshPolar();
+
+  // Un point vient de tomber : inutile d'attendre le prochain tour d'horloge
+  // pour le voir. C'est le seul moment où la polaire change vraiment, donc
+  // c'est le bon déclencheur — et ça évite de la recalculer toutes les 10 s
+  // pour rien le reste du temps.
+  const acc = (live.counters && live.counters.accepted) || 0;
+  if (state.lastAccepted != null && acc !== state.lastAccepted) {
+    refreshPolar();
+    refreshStatus();
+  }
+  state.lastAccepted = acc;
 }
 
 function renderNtfy(n) {
@@ -282,7 +309,7 @@ function svgEl(tag, attrs, text) {
   return e;
 }
 
-let state = { polar: null, polar2: null, port: null, clouds: {}, vmax: 8 };
+let state = { polar: null, polar2: null, port: null, clouds: {}, vmax: 8, liveTws: null, lastAccepted: null, quality: null };
 
 async function refreshPolar() {
   const jobs = [];
@@ -309,10 +336,31 @@ async function refreshPolar() {
     );
   } else state.clouds = {};
 
+  autoSelectBins();
   renderChips();
   draw();
   renderTable();
   renderTargets();
+}
+
+// Au chargement, on veut voir la polaire du vent qu'il fait — pas celle où on
+// a le plus de mesures. C'est la différence entre « des chiffres » et « ma
+// cible de VMG maintenant ». On ne retient que des cases qui contiennent des
+// données : centrer sur 14 nd pour afficher cinq courbes vides n'aiderait
+// personne.
+//
+// Le choix est fait UNE fois, puis figé : si la sélection suivait le vent en
+// continu, le diagramme changerait sous les yeux à chaque risée.
+function autoSelectBins() {
+  if (ui.bins || !state.polar || state.liveTws == null) return;
+  const withData = state.polar.bins.filter((b) => b.cells.some((c) => c.n > 0));
+  if (!withData.length) return;
+  ui.bins = withData
+    .map((b) => ({ ws: b.ws, d: Math.abs(b.ws - state.liveTws) }))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, MAX_SERIES)
+    .map((b) => b.ws)
+    .sort((a, b) => a - b);
 }
 
 // Bins réellement affichés : ceux choisis à la main, sinon les cinq plus
@@ -700,14 +748,13 @@ const SENSITIVITY = [
   ['0.5', 'balanced'],
   ['0.3', 'many'],
 ];
-let sailHist = { data: null, editing: null, draft: { main: '', head: '' }, minStep: '0.5', manual: false, mFrom: '', mTo: '' };
+let sailHist = { data: null, editing: null, draft: { main: '', head: '' }, minStep: '0.5', manual: false, mFrom: '', mTo: '', showAll: false };
 
 async function refreshSailHistory() {
   const el = $('#sailHistory');
   if (!el) return;
   try {
     sailHist.data = await (await fetch(`${API}/api/sail-suggest?minStep=${sailHist.minStep}`)).json();
-    sailHist.ranges = await (await fetch(`${API}/api/sail-ranges`)).json();
   } catch (e) {
     el.innerHTML = '<div class="empty">Could not load.</div>';
     return;
@@ -722,9 +769,16 @@ function renderSailHistory() {
     el.innerHTML = '<div class="empty">No points to work with yet.</div>';
     return;
   }
-  const ranges = sailHist.ranges || [];
+  // Une période traitée — corrigée ou simplement confirmée — n'a plus rien à
+  // demander. On la garde visible le temps de la nav en cours, puis on la
+  // range : sans ça la liste ne fait que croître d'une sortie à l'autre, et
+  // les périodes qui attendent vraiment une décision se noient dedans.
+  const cutoff = d.hideHandledAfterDays == null ? 2 : d.hideHandledAfterDays;
+  const isHidden = (seg) => seg.handled && seg.ageDays > cutoff;
+  const hidden = d.segments.filter(isHidden).length;
+  const shown = sailHist.showAll ? d.segments : d.segments.filter((seg) => !isHidden(seg));
 
-  const rows = d.segments
+  const rows = shown
     .map((seg, i) => {
       const b = d.boundaries.find((x) => x.ts === seg.from);
       const why = !b
@@ -734,11 +788,6 @@ function renderSailHistory() {
         : `${b.step > 0 ? '+' : ''}${fmt(b.step, 2)} kn vs polar${
             b.heelStep == null ? '' : `, heel ${b.heelStep > 0 ? '+' : ''}${fmt(b.heelStep, 1)}°`
           }`;
-
-      // Une correction appliquée se lit SUR la ligne qu'elle corrige. La lister
-      // ailleurs en plus obligeait à faire le rapprochement de tête, pour deux
-      // fois la même information.
-      const cov = ranges.findIndex((r) => r.from <= seg.from && r.to >= seg.to);
 
       // Un segment peut contenir plusieurs voilures — c'est justement ce qu'on
       // vient corriger. On le dit en points, pas en nombre de configurations :
@@ -751,17 +800,20 @@ function renderSailHistory() {
         ? sailLabel(sails[0])
         : `${sailLabel(sails[0])} <span class="mix">mixed · ${sails[0].n} of ${total} pts</span>`;
 
-      const open = sailHist.editing === i;
-      return `<div class="seg-row${open ? ' open' : ''}${cov >= 0 ? ' fixed' : ''}">
+      const open = sailHist.editing === seg.from;
+      const cls = seg.handled === 'corrected' ? ' fixed' : seg.handled === 'reviewed' ? ' okd' : '';
+      return `<div class="seg-row${open ? ' open' : ''}${cls}">
         <div class="seg-head">
           <span class="t">${fmtTime(seg.from, true)} → ${fmtTime(seg.to)}</span>
           <span class="k">${seg.n} pts</span>
           <span class="cur">${plan}</span>
-          ${
-            cov >= 0
-              ? `<button class="act danger" data-del="${cov}">undo</button>`
-              : `<button class="act" data-seg="${i}">${open ? 'cancel' : 'set…'}</button>`
-          }
+          <span class="acts">${
+            seg.handled
+              ? `<span class="done">${seg.handled === 'corrected' ? 'corrected' : 'confirmed'}</span>
+                 <button class="act danger" data-undo="${seg.handled}" data-idx="${seg.handledIndex}">undo</button>`
+              : `<button class="act" data-seg="${seg.from}">${open ? 'cancel' : 'set…'}</button>
+                 <button class="act" data-ok="${seg.from}" data-to="${seg.to}" title="This stretch is already labelled correctly">ok</button>`
+          }</span>
         </div>
         ${why || sails.length > 1 ? `<div class="why">${[why, sails.length > 1 ? sails.slice(1).map((x) => `${x.n} × ${sailLabel(x)}`).join(', ') : ''].filter(Boolean).join(' · ')}</div>` : ''}
         ${open ? sailEditor() : ''}
@@ -780,6 +832,11 @@ function renderSailHistory() {
      </div>` +
     (sailHist.manual ? manualEditor() : '') +
     `<div class="seglist">${rows}</div>` +
+    (hidden
+      ? `<div class="row-actions"><button class="act" id="btnShowAll">${
+          sailHist.showAll ? 'hide handled' : `show ${hidden} handled`
+        }</button></div>`
+      : '') +
     `<div class="hint">Rows are cut where performance stepped up or down once wind and angle are accounted for,
       so this says <b>when</b> something changed, never <b>what</b> — and a wind shift can look like a sail change.
       Corrections sit beside the measurements, so replaying the raw log keeps them.</div>`;
@@ -798,16 +855,30 @@ function renderSailHistory() {
       renderSailHistory();
     });
   bindManual();
+  const showAll = $('#btnShowAll');
+  if (showAll)
+    showAll.addEventListener('click', () => {
+      sailHist.showAll = !sailHist.showAll;
+      renderSailHistory();
+    });
   for (const b of el.querySelectorAll('button[data-seg]'))
     b.addEventListener('click', () => {
-      const i = Number(b.dataset.seg);
-      sailHist.editing = sailHist.editing === i ? null : i;
+      const from = Number(b.dataset.seg);
+      sailHist.editing = sailHist.editing === from ? null : from;
       sailHist.draft = { main: '', head: '' };
       renderSailHistory();
     });
-  for (const b of el.querySelectorAll('button[data-del]'))
+  // « ok » : rien à corriger ici. Ce n'est pas une correction, donc ça ne
+  // touche à aucune mesure — seulement à ce que la liste continue de demander.
+  for (const b of el.querySelectorAll('button[data-ok]'))
     b.addEventListener('click', async () => {
-      await post('/api/sail-range/clear', { index: Number(b.dataset.del) });
+      await post('/api/sail-reviewed', { from: Number(b.dataset.ok), to: Number(b.dataset.to) });
+      await refreshSailHistory();
+    });
+  for (const b of el.querySelectorAll('button[data-undo]'))
+    b.addEventListener('click', async () => {
+      const route = b.dataset.undo === 'corrected' ? '/api/sail-range/clear' : '/api/sail-reviewed/clear';
+      await post(route, { index: Number(b.dataset.idx) });
       await refreshSailHistory();
       refreshPolar();
       refreshStatus();
@@ -888,7 +959,7 @@ function bindSailEditor() {
   const apply = $('#btnSegApply');
   if (!apply) return;
   apply.addEventListener('click', async () => {
-    const seg = sailHist.data.segments[sailHist.editing];
+    const seg = sailHist.data.segments.find((x) => x.from === sailHist.editing);
     if (!seg) return;
     await post('/api/sail-range', { from: seg.from, to: seg.to, main: sailHist.draft.main, head: sailHist.draft.head });
     sailHist.editing = null;
@@ -1136,7 +1207,25 @@ function renderSailChips(tags, total) {
     });
 }
 
+// En mode « ajouté à l'écran d'accueil », iOS n'affiche aucune barre d'adresse
+// et donc aucun bouton de rechargement : sans ce bouton, la seule façon de
+// repartir de zéro serait de fermer l'app. On en profite pour tout recharger
+// aussi au retour au premier plan — c'est le geste qu'on fait en vrai, sortir
+// le téléphone de sa poche.
+function refreshAll(resetBins) {
+  if (resetBins) ui.bins = null;
+  refreshLive();
+  refreshStatus();
+  refreshPolar();
+  refreshSpeedo();
+  refreshSailHistory();
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshAll(false);
+});
+
 buildSail();
+$('#btnReload').addEventListener('click', () => refreshAll(true));
 bindControls();
 bindActions();
 refreshLive();

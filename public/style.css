@@ -55,6 +55,7 @@ header {
   padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--hairline);
 }
 header .sub { color: var(--muted); font-size: 12px; }
+header #btnReload { margin-left: auto; }
 
 .card {
   background: var(--surface);
@@ -290,8 +291,11 @@ code { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color
 .seg-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .seg-head .t { font-variant-numeric: tabular-nums; color: var(--ink); }
 .seg-head .k { color: var(--muted); }
-.seg-head .cur { color: var(--ink-2); margin-left: auto; }
+.seg-head .cur { color: var(--ink-2); margin-left: auto; text-align: right; }
 .seg-head .act { margin-left: 8px; }
+/* Les actions restent groupées : séparées par un retour à la ligne, « ok » se
+   lit comme appartenant à la ligne du dessous. */
+.seg-head .acts { display: inline-flex; align-items: center; white-space: nowrap; margin-left: auto; }
 .seg-row .why { display: block; font-size: 11px; color: var(--warning); margin-top: 3px; }
 .seg-edit { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 8px; }
 .seg-edit .seg button { font-size: 11px; padding: 2px 7px; }
@@ -299,3 +303,5 @@ code { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color
   background: var(--surface); border: 1px solid var(--hairline); color: var(--ink);
   font: inherit; font-size: 12px; padding: 3px 6px; border-radius: 6px;
 }
+.seg-row.okd { border-left: 3px solid var(--axis); opacity: 0.72; }
+.seg-head .done { font-size: 11px; color: var(--muted); }
