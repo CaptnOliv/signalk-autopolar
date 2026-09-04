@@ -3,8 +3,7 @@
 Learns your boat's polar on its own, by watching the way she is actually
 sailed. The more miles you put in, the better it gets — and you never have to
 sail a single test run.
-
-Built-in web app: live recording state, polar diagram, SOG against STW and
+Built-in web app: live recording state, polar diagram, VMG analysis, SOG against STW and
 true against apparent wind, scatter of the underlying measurements, outlier
 editing, speed-sensor diagnostic, and `.pol` / CSV export.
 
@@ -36,13 +35,6 @@ So what invalidates a point is not that the numbers *move*, it is that they
   it is exactly what gets averaged. The ceilings are guard rails only: past
   them nothing is being measured any more (masthead unit flogging in a rail-to-
   rail roll, a run of surfs).
-
-**Heading is not a criterion.** On a wind-mode autopilot a 30° shift swings the
-boat 30° while the point of sail — and therefore the performance — has not
-changed by a degree. Apparent wind angle is what defines the point of sail, so
-that is what gets watched. Real manoeuvres show up as a tack change and as a
-sustained rate of turn (the *mean* rate over the window, not a peak: one slew
-off a wave invalidates nothing).
 
 **The window slides, it is not flushed.** One second out of bounds does not
 cost you the previous 59: as soon as it drops off the far end, the window
