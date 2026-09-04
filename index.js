@@ -52,6 +52,11 @@ module.exports = function (app) {
   let opts = {};
   let sail = { main: '', head: '' };
   let sailFile = null;
+  // Déclaration « je navigue à la voile » pour les bateaux sans aucune donnée
+  // moteur. Persistée : un redémarrage de SignalK en pleine nav ne doit pas
+  // obliger à la reposer. Elle expire de toute façon.
+  let declaredUntil = 0;
+  let declareFile = null;
   let startedAt = null;
   let rpmEverSeen = false;
   // La plus forte valeur brute de `revolutions` jamais observée, conservée
@@ -137,6 +142,18 @@ module.exports = function (app) {
         type: 'number',
         title: 'Engine considered stopped below this RPM',
         default: 50,
+      },
+      allowDeclaredSailing: {
+        type: 'boolean',
+        title: 'Let the crew declare "sailing" when the boat has no engine data at all',
+        description:
+          'Without any engine signal nothing can be collected, which is the safe answer but leaves some boats with nothing. This lets you say so yourself. The declaration expires on its own, so forgetting to renew it only costs you points — there is no way to forget to switch it off and quietly feed motoring into the polar. Points recorded this way are tagged and are left out of shared polars.',
+        default: true,
+      },
+      declaredSailingMinutes: {
+        type: 'number',
+        title: 'How long a "sailing" declaration lasts (minutes)',
+        default: 90,
       },
       engineRpmFactor: {
         type: 'number',
@@ -232,6 +249,25 @@ module.exports = function (app) {
       },
       ntfyUrl: { type: 'string', title: 'ntfy URL (topic included)', default: '' },
       ntfyToken: { type: 'string', title: 'ntfy token', default: '' },
+      boatModel: {
+        type: 'string',
+        title: 'Boat model, as precisely as you can',
+        description:
+          'Used when you share your polar, so it can be compared with other boats of the same design. "Beneteau Oceanis 48" is useful; "sloop" is not. Add the year or a rig variant if the design changed over its production run.',
+        default: '',
+      },
+      shareName: {
+        type: 'string',
+        title: 'Name to publish the polar under',
+        description:
+          'Free text. Your boat name if you like, a pseudonym if you would rather stay anonymous — nothing checks it. The collected data contains no position of any kind, so a shared polar says nothing about where you sailed.',
+        default: '',
+      },
+      shareRepo: {
+        type: 'string',
+        title: 'GitHub repository that collects shared polars',
+        default: 'CaptnOliv/autopolar-polars',
+      },
       publishPerformance: {
         type: 'boolean',
         title: 'Publish performance.* into SignalK (target speed, ratio)',
@@ -383,6 +419,8 @@ module.exports = function (app) {
       rpmSource: eng.rpmSource,
       engineState: eng.state,
       navState: navStateNode ? navStateNode.value : null,
+      declaredSailing: opts.allowDeclaredSailing && Date.now() < declaredUntil,
+      declaredUntil,
       rpmEverSeen,
       twSource,
       fresh: {
@@ -584,6 +622,12 @@ module.exports = function (app) {
       engine: {
         state: verdict && verdict.reason === 'motoring' ? 'running' : verdict && verdict.engineSource ? 'off' : 'unknown',
         source: (verdict && verdict.engineSource) || null,
+        // Un bateau qui n'a AUCUN signal moteur ne peut rien collecter. Plutôt
+        // que de le laisser deviner pourquoi, la webapp lui propose de
+        // déclarer — mais seulement dans ce cas-là.
+        canDeclare: opts.allowDeclaredSailing && !snap.fresh.rpm && !snap.fresh.engineState,
+        declaredUntil: snap.declaredUntil,
+        declaredMinutes: opts.declaredSailingMinutes,
         rpm: snap.rpm,
         rpmRaw: snap.rpmRaw,
         rpmSource: snap.rpmSource,
@@ -606,6 +650,7 @@ module.exports = function (app) {
     accumulating: 'building up',
     motoring: 'under engine',
     engine_unknown: 'engine state unknown',
+    declared: 'sailing (declared)',
     anchored: 'at anchor or alongside',
     too_slow: 'too slow',
     no_wind: 'no wind',
@@ -723,6 +768,7 @@ module.exports = function (app) {
       minSamples: q.min ? Number(q.min) : opts.minSamples,
       excluded: store.excluded(),
       overrides: store.overrides().cells,
+      excludeDeclared: q.shared === '1',
       sail: q.main || q.head ? { main: q.main || '', head: q.head || '' } : null,
       sailRanges: store.overrides().sailRanges,
       smooth: q.smooth !== '0',
@@ -995,6 +1041,21 @@ module.exports = function (app) {
       res.json({ ok: true });
     });
 
+    // Déclaration de navigation à la voile, pour les bateaux sans donnée
+    // moteur. `minutes: 0` remet le curseur sur « au moteur ».
+    router.post('/api/declare', (req, res) => {
+      const b = body(req);
+      const mins = b.minutes == null ? opts.declaredSailingMinutes : Number(b.minutes);
+      declaredUntil = mins > 0 ? Date.now() + mins * 60000 : 0;
+      try {
+        fs.writeFileSync(declareFile, JSON.stringify({ until: declaredUntil }));
+      } catch (e) {
+        app.error(`[polar] declare: ${e.message}`);
+      }
+      buffer = []; // la fenêtre en cours décrivait un autre régime
+      res.json({ ok: true, declaredUntil });
+    });
+
     router.post('/api/sail', (req, res) => {
       const b = body(req);
       sail = { main: b.main || '', head: b.head || '' };
@@ -1013,6 +1074,67 @@ module.exports = function (app) {
     router.post('/api/reset', (req, res) => {
       store.reset(body(req).what || 'runs');
       res.json({ ok: true });
+    });
+
+    // ── Partage ────────────────────────────────────────────────────────────
+    // Ce plugin est gratuit et le restera ; l'idée est que chacun reverse la
+    // polaire de son bateau, pour que les modèles courants finissent par en
+    // avoir une bonne. On prépare donc tout — fichier et texte — et on ouvre
+    // une issue pré-remplie : aucun jeton dans le plugin, aucun service à
+    // héberger, et l'utilisateur voit exactement ce qu'il envoie.
+    router.get('/api/share', (req, res) => {
+      const q = Object.assign({}, req.query, { shared: '1' });
+      const polar = polarLib.buildPolar(store.runs(), polarOpts(q));
+      const runs = store.runs();
+      const declared = runs.filter((r) => r.engineSource === 'declared').length;
+
+      // La taille et le gréement, si le serveur les connaît : c'est ce qui
+      // permet de comparer deux bateaux du même modèle.
+      const design = app.getSelfPath('design') || {};
+      const val = (n) => (n && n.value !== undefined ? n.value : n);
+      const dims = {};
+      for (const k of ['length', 'beam', 'draft', 'displacement']) {
+        const v = val(design[k]);
+        if (v != null) dims[k] = typeof v === 'object' ? v.overall || v.maximum || v.hull || null : v;
+      }
+
+      let bands = 0;
+      let cells = 0;
+      for (const b of polar.bins) {
+        let any = false;
+        for (const c of b.cells) if (c.n) { cells++; any = true; }
+        if (any) bands++;
+      }
+
+      res.json({
+        model: opts.boatModel,
+        name: opts.shareName,
+        repo: opts.shareRepo,
+        dims,
+        version: require('./package.json').version,
+        points: polar.used,
+        totalPoints: runs.length,
+        declaredExcluded: declared,
+        cells,
+        bands,
+        first: runs.length ? runs[0].ts : null,
+        last: runs.length ? runs[runs.length - 1].ts : null,
+        speed: polar.speed,
+        wind: polar.wind,
+        stat: polar.stat,
+        ready: Boolean(opts.boatModel && opts.shareName && polar.used >= 100),
+      });
+    });
+
+    router.get('/api/share.pol', (req, res) => {
+      const q = Object.assign({}, req.query, { shared: '1' });
+      const name = (opts.shareName || 'polar').replace(/[^A-Za-z0-9_-]+/g, '-');
+      res.type('text/plain');
+      // setHeader plutôt que la méthode `set` d'Express : elle existe sur la
+      // réponse HTTP native, donc la route marche aussi hors serveur SignalK
+      // (aperçu, tests) au lieu de lever une exception à l'exécution.
+      res.setHeader('Content-Disposition', `attachment; filename="${name}.pol"`);
+      res.send(polarLib.toPol(polarLib.buildPolar(store.runs(), polarOpts(q))));
     });
 
     router.get('/api/export.pol', (req, res) => {
@@ -1050,6 +1172,8 @@ module.exports = function (app) {
         minTwaDeg: 25,
         engineOffRpm: 50,
         engineRpmFactor: 60,
+        allowDeclaredSailing: true,
+        declaredSailingMinutes: 90,
         autostateFallback: true,
         staleMs: 6000,
         engineStaleMs: 180000,
@@ -1067,6 +1191,9 @@ module.exports = function (app) {
         idleAlertMin: 20,
         ntfyUrl: '',
         ntfyToken: '',
+        boatModel: '',
+        shareName: '',
+        shareRepo: 'CaptnOliv/autopolar-polars',
         publishPerformance: false,
       },
       options || {}
@@ -1074,6 +1201,14 @@ module.exports = function (app) {
 
     const dir = app.getDataDirPath();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    declareFile = path.join(dir, 'declare.json');
+    if (fs.existsSync(declareFile)) {
+      try {
+        declaredUntil = JSON.parse(fs.readFileSync(declareFile, 'utf8')).until || 0;
+      } catch (e) {
+        /* pas de déclaration valide, on repart de zéro */
+      }
+    }
     sailFile = path.join(dir, 'sail.json');
     if (fs.existsSync(sailFile)) {
       try {

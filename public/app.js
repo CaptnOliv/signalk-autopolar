@@ -103,6 +103,8 @@ async function refreshLive() {
     allOk ? `${ok} of ${keys.length} inputs up to date` : `${ok}/${keys.length} inputs up to date — ${keys.filter((k) => !f[k]).join(', ')}`
   }</span>`;
 
+  renderDeclare(live.engine);
+
   // Dire explicitement qu'une collecte à l'arrêt n'est pas une panne, quand
   // c'est le cas : c'est la lecture qui prête à confusion, pas l'état.
   $('#stateWhy').textContent = allOk && !rec ? 'data is coming in fine — collecting will resume under sail' : '';
@@ -134,7 +136,13 @@ async function refreshLive() {
   };
   const g = live.ages || {};
   const ENGINE_STATE = { running: 'running', off: 'off', unknown: '—' };
-  const ENGINE_VIA = { rpm: 'via rpm', state: 'via engine state', 'state+rpm': 'via engine state', autostate: 'via navigation.state' };
+  const ENGINE_VIA = {
+    rpm: 'via rpm',
+    state: 'via engine state',
+    'state+rpm': 'via engine state',
+    autostate: 'via navigation.state',
+    declared: 'declared by crew',
+  };
   const engineTile = (e, fresh, ms) => {
     if (!e) return tile('Engine', '—', '', fresh, ms);
     return tile('Engine', ENGINE_STATE[e.state] || e.state, '', e.state === 'unknown' ? false : fresh, ms, ENGINE_VIA[e.source] || '');
@@ -237,6 +245,33 @@ function renderNtfy(n) {
     await post('/api/ntfy-clear', {});
     el.innerHTML = '';
   };
+}
+
+// Sur un bateau sans aucun signal moteur, la machine ne peut pas distinguer la
+// voile du moteur — et refuse donc tout, ce qui est la bonne réponse mais ne
+// laisse rien. On propose alors de le déclarer soi-même. La déclaration expire
+// seule : oublier de la renouveler coûte quelques points, et il n'existe aucun
+// oubli qui ferait entrer du moteur dans la polaire.
+function renderDeclare(e) {
+  const el = $('#declare');
+  if (!el) return;
+  if (!e || !e.canDeclare) {
+    el.innerHTML = '';
+    return;
+  }
+  const left = e.declaredUntil ? Math.round((e.declaredUntil - Date.now()) / 60000) : 0;
+  el.innerHTML =
+    left > 0
+      ? `<span class="msg">sailing declared · <b>${left} min</b> left</span>
+         <button class="act" data-mins="${e.declaredMinutes}">renew</button>
+         <button class="act danger" data-mins="0">under engine</button>`
+      : `<span class="msg warn">No engine data on this boat, so nothing can be collected until you say so.</span>
+         <button class="act" data-mins="${e.declaredMinutes}">I am sailing (${e.declaredMinutes} min)</button>`;
+  for (const b of el.querySelectorAll('button'))
+    b.addEventListener('click', async () => {
+      await post('/api/declare', { minutes: Number(b.dataset.mins) });
+      refreshLive();
+    });
 }
 
 // ── Voilure ─────────────────────────────────────────────────────────────────
@@ -1064,15 +1099,100 @@ async function refreshSpeedo() {
       <tbody>${rows || '<tr><td colspan="4" class="k">no speed band has enough points yet</td></tr>'}</tbody></table></div>
     <div class="row-actions">
       <button class="act" id="btnCalCsv">Correction table (CSV)</button>
-      <button class="act" id="btnCalAirmar">Export for the Airmar DST810 plugin</button>
     </div>
-    <div class="hint">The Airmar export is a log in the format read by
-      <code>airmar-dst810-auto-calibration</code>: append it to that plugin's <code>runs.jsonl</code> and it will
-      fold these points into its advanced calibration table. Nothing here ever rewrites your measurements —
-      the corrected polar is just one more reading of the same data.</div>`;
+    <div class="hint">Indicated speed, real speed, factor and error — the shape a multi-point speed calibration
+      table expects. Speed bands you have never sailed are left blank rather than invented, and the heel axis
+      some instruments offer is not filled: there would be too few points per cell to trust. Nothing here ever
+      rewrites your measurements — the corrected polar is one more reading of the same data.</div>`;
 
   $('#btnCalCsv').onclick = () => window.open(`${API}/api/speedo/calibration.csv`, '_blank');
-  $('#btnCalAirmar').onclick = () => window.open(`${API}/api/speedo/airmar.jsonl`, '_blank');
+}
+
+// ── Partage ─────────────────────────────────────────────────────────────────
+//
+// Une issue GitHub pré-remplie, et le fichier téléchargé dans la foulée. Pas
+// de jeton dans le plugin, pas de service à héberger, et surtout : on voit
+// exactement ce qu'on envoie avant de l'envoyer. Une contribution qui se fait
+// à l'aveugle ne se fait pas deux fois.
+async function refreshShare() {
+  const el = $('#share');
+  if (!el) return;
+  let d;
+  try {
+    d = await (await fetch(`${API}/api/share?${query()}`)).json();
+  } catch (e) {
+    return;
+  }
+  const missing = [];
+  if (!d.model) missing.push('the boat model');
+  if (!d.name) missing.push('a name to publish under');
+  if (d.points < 100) missing.push(`more points (${d.points} of 100)`);
+
+  const dim = (k, u) => (d.dims && d.dims[k] != null ? `${fmt(d.dims[k], 2)} ${u}` : null);
+  const facts = [
+    d.model || null,
+    dim('length', 'm') ? `${dim('length', 'm')} LOA` : null,
+    `${d.points} points`,
+    `${d.cells} cells`,
+    `${d.bands} wind bands`,
+  ].filter(Boolean);
+
+  el.innerHTML =
+    `<div class="hint">This plugin is free. The one thing that would make it better for everyone is the polar of
+      your own boat: most production designs have no honest measured polar anywhere, only the builder's optimistic
+      one. <b>Nothing collected here contains a position</b> — not one latitude, not one longitude — so a shared
+      polar says nothing about where you have been. The name is free text; a pseudonym is fine.</div>
+     <div class="sharefacts">${facts.map((f) => `<span>${f}</span>`).join('')}</div>
+     ${
+       d.declaredExcluded
+         ? `<div class="hint">${d.declaredExcluded} point(s) recorded on a "sailing" declaration are left out —
+            nobody else can check a declaration.</div>`
+         : ''
+     }
+     ${
+       missing.length
+         ? `<div class="hint warn">Still needed: ${missing.join(', ')}.${
+             d.model && d.name ? '' : ' Set them in the plugin configuration (SignalK → Server → Plugin Config).'
+           }</div>`
+         : `<div class="row-actions">
+              <button class="act" id="btnShare">Download and open a submission</button>
+            </div>
+            <div class="hint">The file downloads, then a pre-filled issue opens on
+              <code>${d.repo}</code>. Drag the file into it and send — you will see the whole message first.</div>`
+     }`;
+
+  const btn = $('#btnShare');
+  if (!btn) return;
+  btn.onclick = () => {
+    window.open(`${API}/api/share.pol?${query()}`, '_blank');
+    const when = (t) => (t ? new Date(t).toLocaleDateString() : '?');
+    const body = [
+      `**Boat model:** ${d.model}`,
+      `**Published as:** ${d.name}`,
+      d.dims && d.dims.length != null ? `**Length overall:** ${fmt(d.dims.length, 2)} m` : null,
+      d.dims && d.dims.beam != null ? `**Beam:** ${fmt(d.dims.beam, 2)} m` : null,
+      d.dims && d.dims.draft != null ? `**Draught:** ${fmt(d.dims.draft, 2)} m` : null,
+      '',
+      `**Points:** ${d.points} (over ${d.cells} cells, ${d.bands} wind bands)`,
+      `**Collected:** ${when(d.first)} → ${when(d.last)}`,
+      `**Axes:** ${d.speed === 'sog' ? 'speed over ground' : d.speed === 'stwc' ? 'corrected speed through water' : 'speed through water'}, ${
+        d.wind === 'true' ? 'true wind' : 'apparent wind'
+      }, ${d.stat} per cell`,
+      `**Plugin version:** ${d.version}`,
+      '',
+      '_The `.pol` file has just been downloaded — please attach it to this issue._',
+      '',
+      '_No position data of any kind is collected or shared._',
+    ]
+      .filter((x) => x !== null)
+      .join('\n');
+    const url =
+      `https://github.com/${d.repo}/issues/new?title=` +
+      encodeURIComponent(`Polar: ${d.model} — ${d.name}`) +
+      '&body=' +
+      encodeURIComponent(body);
+    window.open(url, '_blank');
+  };
 }
 
 // ── Contrôles ───────────────────────────────────────────────────────────────
@@ -1219,6 +1339,7 @@ function refreshAll(resetBins) {
   refreshPolar();
   refreshSpeedo();
   refreshSailHistory();
+  refreshShare();
 }
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) refreshAll(false);
@@ -1233,6 +1354,7 @@ refreshStatus();
 refreshPolar();
 refreshSpeedo();
 refreshSailHistory();
+refreshShare();
 setInterval(refreshLive, 2000);
 setInterval(refreshStatus, 15000);
 setInterval(refreshPolar, 60000);

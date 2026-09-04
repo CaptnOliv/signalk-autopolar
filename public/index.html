@@ -39,6 +39,9 @@
     <span class="msg" id="progressLabel"></span>
   </div>
   <div class="hint" id="stateWhy"></div>
+  <!-- N'apparaît que sur un bateau sans aucune donnée moteur : ailleurs, ce
+       serait proposer de contredire une mesure par une déclaration. -->
+  <div class="row-actions" id="declare"></div>
   <div class="tiles" id="tiles"></div>
   <div class="metrics" id="metrics"></div>
   <div class="hint" id="liveHint"></div>
@@ -146,6 +149,13 @@
     <section class="card" id="cardSail">
       <h2>Sail plan over time <span class="sub">— fix it after the fact</span></h2>
       <div id="sailHistory"><div class="empty">Loading…</div></div>
+    </section>
+
+    <!-- Le plugin est gratuit ; l'idée est que chacun reverse la polaire de
+         son bateau. On rend le geste sans friction plutôt que de l'exiger. -->
+    <section class="card" id="cardShare">
+      <h2>Share your polar <span class="sub">— so the next owner of your model starts with one</span></h2>
+      <div id="share"><div class="empty">Loading…</div></div>
     </section>
 
     <section class="card" id="cardExport">

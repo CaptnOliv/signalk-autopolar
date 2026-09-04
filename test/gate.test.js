@@ -54,6 +54,27 @@ const fb = classify(s({ rpm: null, engineState: null, fresh: { rpm: false, engin
 assert.strictEqual(fb.usable, true);
 assert.strictEqual(fb.engineSource, 'autostate');
 
+// ── Déclaration de l'équipage, faute de tout signal moteur ────────────────
+// La seule branche où la machine croit un humain sur parole. Elle ne doit
+// s'ouvrir que si AUCUNE mesure moteur n'est disponible : une déclaration ne
+// contredit jamais un instrument.
+const noEngine = { rpm: null, engineState: null, rpmEverSeen: false, fresh: { rpm: false, engineState: false } };
+{
+  const d = classify(s(Object.assign({}, noEngine, { declaredSailing: true })), OPTS);
+  assert.strictEqual(d.usable, true);
+  assert.strictEqual(d.engineSource, 'declared', 'le point est marqué comme déclaré, donc filtrable');
+
+  // Sans déclaration, on refuse : c'est la bonne réponse, pas un défaut.
+  assert.strictEqual(classify(s(noEngine), OPTS).reason, 'engine_unknown');
+
+  // Et une déclaration ne peut pas faire passer un moteur qui tourne.
+  assert.strictEqual(classify(s({ rpm: 1200, declaredSailing: true }), OPTS).reason, 'motoring');
+  assert.strictEqual(classify(s({ engineState: 'started', declaredSailing: true }), OPTS).reason, 'motoring');
+
+  // Une mesure disponible prime toujours sur la parole.
+  assert.strictEqual(classify(s({ declaredSailing: true }), OPTS).engineSource, 'state+rpm');
+}
+
 // Même situation, mais on n'a JAMAIS vu de donnée moteur : autostate annonce
 // « sailing » par défaut, ce qui ne prouve rien. On refuse.
 assert.strictEqual(

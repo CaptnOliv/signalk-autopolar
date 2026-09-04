@@ -160,4 +160,21 @@ assert.ok(polText.split('\n').every((l) => !/^\d+(\t0)+$/.test(l)), 'pas de lign
   assert.strictEqual(oldFilter.n, 3);
 }
 
+// ── Points déclarés, exclus du partage ────────────────────────────────────
+// Un point dont la seule preuve « pas au moteur » est la parole de l'équipage
+// vaut pour son propriétaire, pas pour un corpus partagé : personne d'autre ne
+// peut la vérifier. Il compte donc chez soi et disparaît à l'export partagé.
+{
+  const runs = [
+    { id: 1, sog: 7.0, twa: 130, tws: 16, engineSource: 'rpm' },
+    { id: 2, sog: 5.0, twa: 130, tws: 16, engineSource: 'declared' },
+  ];
+  const o = { twsBins: [16], twaStep: 10, minSamples: 1, smooth: false };
+  const mine = p.buildPolar(runs, o).bins[0].cells.find((c) => c.twa === 130);
+  const shared = p.buildPolar(runs, Object.assign({ excludeDeclared: true }, o)).bins[0].cells.find((c) => c.twa === 130);
+  assert.strictEqual(mine.n, 2, 'chez soi, les deux comptent');
+  assert.strictEqual(shared.n, 1, 'à partager, seul le point vérifiable reste');
+  assert.strictEqual(shared.value, 7.0);
+}
+
 console.log('polar: ok');

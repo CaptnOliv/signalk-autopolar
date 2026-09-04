@@ -43,7 +43,7 @@ global.setInterval = (fn) => {
   return 0;
 };
 const plugin = require('../index.js')(fakeApp);
-plugin.start({});
+plugin.start({ boatModel: 'Example 40', shareName: 'preview' });
 global.setInterval = realSetInterval;
 // On fait tourner la boucle du plugin pour de vrai : c'est elle qui remplit
 // l'état en direct, la fenêtre en cours et les métriques.
@@ -121,8 +121,19 @@ http
       const body = raw ? JSON.parse(raw) : {};
       h(
         { query, body },
+        // Le faux `res` doit ressembler à celui d'Express, sinon l'aperçu
+        // valide des routes qui planteront en production — ou l'inverse,
+        // comme ici : `setHeader` existe sur toute réponse HTTP, et son
+        // absence dans ce bouchon a fait échouer une route parfaitement
+        // correcte. Un harnais qui ment ne sert à rien.
         {
           type: (t) => res.setHeader('Content-Type', t.includes('/') ? t : 'text/plain'),
+          setHeader: (k, v) => res.setHeader(k, v),
+          set: (k, v) => res.setHeader(k, v),
+          status(c) {
+            res.statusCode = c;
+            return this;
+          },
           json: (v) => res.end(JSON.stringify(v)),
           send: (v) => res.end(v),
           end: () => res.end(),

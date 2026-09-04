@@ -70,67 +70,170 @@ trustworthy one, and most recorders never ask the question.
 
 ## Never under engine, never at anchor
 
-The criterion is strict: no proof the engine is stopped, no collection. The
-proof comes from `propulsion.*.revolutions` or `propulsion.*.state`.
+A polar describes what the sails do. One hour of motoring folded into it lifts
+every number and there is no way to tell afterwards which points were honest.
+So the rule is deliberately blunt: **no evidence that the engine is off, no
+collection.** The plugin would rather record nothing than record something
+wrong.
 
-If that data disappears (a broken MQTT bridge, say) the plugin falls back on
-`navigation.state` = `sailing` — but only if it has seen engine data at least
-once, otherwise `signalk-autostate` reports "sailing" by default while knowing
-nothing. The fallback is not circular despite the shared source: autostate is
-*sticky*, it keeps the last known state. If the outage happens under sail it
-stays on `sailing` and the passage is not lost; if it happens under engine it
-stays on `motoring` and nothing is collected. It errs on the right side.
-Affected points are tagged `engineSource:"autostate"` and stay identifiable in
-the web app and in the export.
+### What counts as evidence
 
-`navigation.state` = `anchored`/`moored` also blocks collection — unless boat
-speed clearly says otherwise, that state often being late.
+Two standard SignalK paths, either of which is enough:
 
-> **Engine data is often much slower than the rest.** Wind and speed arrive
-> several times a second off the NMEA 2000 bus; engine RPM bridged over MQTT
-> from a Cerbo GX arrives *once a minute*. With one common freshness threshold
-> the engine would read "unknown" 54 s out of every 60 and nothing would ever
-> be collected. Hence a separate `engineStaleMs` (180 s by default). If your
-> engine data is slow, that is the setting to look at first.
+| path | what it is |
+|---|---|
+| `propulsion.<engine>.state` | `started` / `stopped` |
+| `propulsion.<engine>.revolutions` | engine speed, in hertz |
+
+**`state` is preferred**, for a simple reason: it answers the question
+directly, and it cannot be wrong by a factor. `revolutions` is defined in
+hertz, but plenty of gateways publish RPM into that path instead, which is
+sixty times too high — and an engine "idling" at a phantom 30 RPM would quietly
+block collection forever. When both paths are present and they disagree, the
+plugin assumes the engine is *running*. Losing one point costs one point;
+letting a motoring point into the polar costs the polar.
+
+If you have several engines, any one of them running is enough to stop
+collection.
+
+### Do I need the autostate plugin? No.
+
+`signalk-autostate` is a fine plugin, but it will not solve this problem,
+because **it reads the same two paths** — `propulsion.*.state` and
+`propulsion.*.revolutions`. On a boat with no engine data it does not deduce
+anything: it answers with the fixed value you set in its own configuration,
+`default_propulsion`, which ships as `sailing`. Installing it on an engineless
+data setup would therefore declare "sailing" all day, motoring included, and
+quietly poison your polar. That is worse than collecting nothing.
+
+Where it does help is as a **safety net for boats that already have engine
+data**. If your engine feed dies mid-passage — a bridge that drops, a NMEA
+device that stops talking — autostate keeps reporting the last state it knew.
+Die under sail and it stays on `sailing`, so the passage is not lost; die under
+engine and it stays on `motoring`, so nothing is collected. It errs on the safe
+side in both directions. This plugin uses that as a last resort only, and only
+if it has seen real engine data at least once during the session — otherwise
+"sailing" would mean "no idea". Points collected that way are tagged
+`engineSource: "autostate"` and stay filterable afterwards.
+
+### My boat has no engine data at all
+
+Then by default nothing is collected, and the web app says `engine state
+unknown` rather than pretend. That is the honest outcome — but it is fixable,
+usually cheaply. **You do not need a tachometer, only a signal that says
+*running*.** An oil-pressure switch, the alternator's D+ terminal or the
+ignition line, wired to any input that can publish
+`propulsion.<engine>.state`, is enough. That one boolean unlocks everything,
+permanently.
+
+Until then, you can say it yourself: the web app offers a **"I am sailing"
+declaration**, good for 90 minutes and renewable. It is the only place where
+the plugin takes a human's word for it, so it is bounded in two ways. The
+declaration expires on its own — forgetting to renew it costs you a few points,
+and there is no way to forget to switch it off and quietly feed an hour of
+motoring into your polar. And every point recorded that way is tagged
+`engineSource: "declared"`, stays filterable, and is **left out of any polar
+you share**: nobody else can check a declaration.
+
+### At anchor and alongside
+
+`navigation.state` set to `anchored` or `moored` also blocks collection — but
+only if boat speed agrees. That state is often minutes behind reality, and a
+boat clearly making way is not moored whatever the flag says.
+
+### One setting to know about: slow engine data
+
+Wind and boat speed arrive several times a second off the NMEA 2000 bus. Engine
+data often does not: bridged over MQTT from a Cerbo GX, for instance, it lands
+**once a minute**. Judged by the same freshness rule as the rest, the engine
+would read "unknown" 54 seconds out of every 60 and nothing would ever be
+collected. Hence a separate `engineStaleMs`, 180 seconds by default. If your
+engine feed is slow, that is the first setting to look at.
 
 ## Is your speed sensor telling the truth?
 
-STW and SOG rarely agree. The gap has two possible causes, and they call for
-opposite responses:
+Speed through the water and speed over ground almost never agree. The gap has
+two very different causes, they call for opposite responses, and they decide
+which of the two polars is worth exporting.
 
-- **current** — the boat is being set: the gap is a roughly fixed vector **in
-  the earth frame**. Nothing to fix on the sensor, and the STW polar is the
-  good one;
-- **a speed-sensor error** — the paddlewheel reads wrong: the gap is a fixed
-  vector **in the boat frame**, always in line with the hull. The sensor needs
-  calibrating, and the SOG polar is the good one.
+**Current.** The gap is the set you are carrying. Nothing is wrong with the
+sensor, and **STW is the axis to trust**: it describes the boat moving through
+the water her sails are actually working in. SOG, carrying the set with it, is
+not a property of the boat at all.
 
-The plugin runs two independent tests and shows both, along with what each
-concluded:
-
-1. **Direction of the gap.** The circular concentration of the implied current
-   direction is measured in each frame. Needs legs on varied headings — on a
-   single tack the two frames coincide and the test says so instead of guessing.
-2. **Does the gap grow with speed?** Current offsets your track by a roughly
-   constant number of knots whatever your speed; a sensor scale error offsets
-   it *proportionally* to speed. Both models are fitted and compared. This one
-   works even on a single tack.
-
-When both agree the verdict is solid; when they disagree the plugin says so
-rather than picking one.
+**A sensor error.** The paddlewheel reads high or low. The gap then lies along
+the hull's fore-and-aft axis and grows with boat speed. Here **SOG is the axis
+to trust** — provided there is not much current.
 
 ![Speed sensor check](docs/speed-sensor.png)
 
-If the verdict is the sensor, you get an empirical correction table (no model
-is imposed — a paddlewheel rarely errs linearly, which is exactly what a
-multi-point sensor table is for), a fourth boat-speed reading in the diagram
-(**STW corrected**), and two exports:
+### What actually separates them
 
-- a **CSV correction table** at 1-10 kn, with bands you have never sailed left
-  blank rather than invented;
-- an **export for `airmar-dst810-auto-calibration`**, in that plugin's own log
-  format: append it to its `runs.jsonl` and your sailing points feed straight
-  into its advanced DST810 calibration table.
+The textbook answer is that current is fixed in the earth frame while a sensor
+error is fixed in the boat frame. That is true instant by instant, and it is
+the basis of the first test the plugin runs — but on its own it is not enough,
+and it is worth being honest about why:
+
+- **Current is not one vector for a whole passage.** It turns with the tide, it
+  accelerates round headlands and through narrows and estuaries, and it changes
+  with the hour of the day. Fifteen hours of sailing may have carried three
+  different sets. The direction test needs a stretch over which the current can
+  reasonably be treated as steady, and legs on genuinely different headings.
+- **Leeway also lies in the boat frame.** The water track is drawn along the
+  heading, but the boat crabs a few degrees to leeward. On a passage sailed
+  mostly on one tack that consistent sideways offset can look like a fixed
+  boat-frame vector and flatter the "sensor" verdict. It is athwartships rather
+  than fore-and-aft, which is why the test measures concentration rather than a
+  bearing — but it is a reason not to lean on this test alone.
+- **A compass error** rotates the water track, and with it the implied current,
+  without changing its length at all.
+
+So the plugin runs a second test that ignores direction entirely:
+
+> **Does the gap grow with boat speed?** A current sets you by roughly the same
+> number of knots whether you are making three or nine. A scale error in the
+> sensor offsets you *in proportion* to your speed. Both models are fitted to
+> your own points and compared, and the better fit wins.
+
+This one still works on a single tack, which is often all a passage gives you.
+When the two tests agree the verdict is solid. When they disagree, or when
+neither has enough variety to speak, the plugin says so instead of picking one.
+
+### The test you can run yourself, and it beats both
+
+**A sensor error is permanent. Current is not.** Sail the same water on the
+opposite tide and a current reverses; a paddlewheel that reads 10 % high reads
+10 % high on every passage, in every sea, for ever. That is the real proof, and
+no single outing can provide it.
+
+Which is why every point is kept. Collect over several passages, in different
+places and at different states of the tide, and look at whether the discrepancy
+keeps the same shape. If it does, it is the sensor. If it comes and goes with
+the water you were in, it was the water — and your sensor was fine all along.
+
+### The correction table
+
+Permanent does not mean constant. On the boat this plugin was written for, the
+error runs from about 2 % at 2.5 kn to 14 % at 10 kn. A single calibration
+figure would be wrong nearly everywhere, which is exactly why speed sensors
+such as the Airmar DST810 offer a multi-point calibration table rather than one
+number.
+
+When the verdict points at the sensor you get:
+
+- a **CSV correction table** from 1 to 10 kn — indicated speed, measured real
+  speed, factor and error — in the shape the DST810's advanced speed
+  calibration table expects. Speed bands you have never sailed are left blank
+  rather than invented;
+- a fourth boat-speed reading in the diagram, **STW corrected**, so you can
+  check that the corrected curve falls on the SOG curve.
+
+Two honest caveats before you type anything into an instrument. The table is
+only as good as the assumption that nothing else moved the water while you
+collected it, so it deserves several passages behind it. And the DST810's
+advanced table has a heel axis as well as a speed axis: this export fills the
+speed axis only. Points do carry heel, but splitting them by heel as well
+would leave too few measurements in each cell to be worth trusting.
 
 Nothing here ever rewrites a measurement. The corrected polar is one more
 reading of the same raw data, alongside the other three.
@@ -274,6 +377,42 @@ actually makes it usable — cells resting on three or more measurements, how
 many wind bands you have covered, the span of angles, the median confidence of
 the windows — and, when it falls short, *what is missing* rather than just a
 grade.
+
+## Sharing your polar
+
+This plugin is free and stays free. The one thing that would make it better for
+everyone is your boat's polar.
+
+Most production designs have no honest measured polar anywhere. What circulates
+is the builder's brochure figure, produced by a velocity prediction program on
+a clean hull with a new sail wardrobe and no crew luggage — and every owner
+quietly discovers it is optimistic. A polar measured over real passages, with
+real sails, is worth more, and the only way to get one per design is for owners
+to pool them.
+
+So when you have collected enough, the web app offers to submit yours. Two
+things make that easy to say yes to:
+
+- **Nothing collected here contains a position.** Not one latitude, not one
+  longitude — check `runs.jsonl` yourself. A shared polar says what your boat
+  does at a given wind and angle, and nothing whatsoever about where you have
+  been or when you were there.
+- **The name is free text.** Your boat's name if you like, a pseudonym if you
+  would rather stay anonymous. Nothing verifies it. What matters for the corpus
+  is the *model*, as precisely as you can give it: "Beneteau Oceanis 48" is
+  useful, "sloop" is not — add the year or the rig variant if the design changed
+  during its production run.
+
+Submitting downloads the `.pol` file and opens a **pre-filled issue** on the
+collection repository, with the model, the dimensions your server already
+knows, how many points the polar rests on and over what period. You see the
+whole message before anything is sent; you attach the file and press submit.
+The plugin holds no credentials, talks to no service of ours, and cannot send
+anything on its own.
+
+Points recorded on a "sailing" declaration are excluded automatically, and the
+button only appears once the polar rests on at least 100 points — a thin polar
+helps nobody, including you.
 
 ## Idle alert (ntfy)
 
