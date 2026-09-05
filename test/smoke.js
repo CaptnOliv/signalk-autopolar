@@ -59,7 +59,8 @@ global.setInterval = (fn) => {
 global.clearInterval = () => {};
 
 const plugin = require('../index.js')(fakeApp);
-plugin.start({ windowS: 30, minSamples: 1, staleMs: 6000 });
+const IDENT = { boatModel: 'Test 40', shareName: 'test', sharePolar: false };
+plugin.start(Object.assign({ windowS: 30, minSamples: 1, staleMs: 6000 }, IDENT));
 global.setInterval = realSetInterval;
 assert.ok(tick, 'le plugin a bien démarré une boucle');
 
@@ -221,7 +222,7 @@ global.setInterval = (fn) => {
   tick2 = fn;
   return 0;
 };
-p2.start({});
+p2.start(Object.assign({}, IDENT));
 global.setInterval = realSetInterval;
 assert.doesNotThrow(() => tick2(), 'un arbre cassé ne fait pas remonter d\'exception');
 assert.ok(logged > 0, "l'erreur est signalée et non avalée en silence");
@@ -246,7 +247,7 @@ p2.stop();
       t = fn;
       return 0;
     };
-    pl.start(options);
+    pl.start(Object.assign({}, IDENT, options));
     global.setInterval = realSetInterval;
     let handler = null;
     pl.registerWithRouter({
@@ -271,6 +272,33 @@ p2.stop();
   const raw = live({ engineRpmFactor: 1 });
   assert.strictEqual(raw.values.rpm, 30, 'le facteur est réellement appliqué');
   assert.strictEqual(raw.values.rpmRaw, 30, 'et il ne touche pas au brut');
+}
+
+// ── Sans identité du bateau, rien n'est collecté ──────────────────────────
+// Le consentement au partage se donne une fois, en configuration, et il est
+// indissociable du modèle et du nom. Une polaire accumulée en silence sans
+// eux ne serait rattachable à rien : mieux vaut ne rien faire, et le dire.
+{
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'polaire-bare-'));
+  let status = '';
+  const app2 = Object.assign({}, fakeApp, { getDataDirPath: () => bare, setPluginStatus: (m) => (status = m) });
+  const pl = require('../index.js')(app2);
+  let t = null;
+  global.setInterval = (fn) => {
+    t = fn;
+    return 0;
+  };
+  pl.start({ windowS: 30, minSamples: 1 });
+  global.setInterval = realSetInterval;
+  for (let i = 0; i < 200; i++) {
+    world = { sog: 6.5, stw: 6.4, aws: 14, awa: 42, tws: 12, twa: 45, hdg: 100, rpm: 0 };
+    t();
+    now += 1000;
+  }
+  assert.ok(/set the boat model/.test(status), `le statut le dit clairement, obtenu : ${status}`);
+  assert.ok(!fs.existsSync(path.join(bare, 'runs.jsonl')), 'aucun point collecté');
+  pl.stop();
+  fs.rmSync(bare, { recursive: true, force: true });
 }
 
 plugin.stop();

@@ -380,39 +380,48 @@ grade.
 
 ## Sharing your polar
 
-This plugin is free and stays free. The one thing that would make it better for
-everyone is your boat's polar.
+This plugin is free and stays free. In exchange, the polar it learns from your
+boat goes back into a shared pool.
 
 Most production designs have no honest measured polar anywhere. What circulates
 is the builder's brochure figure, produced by a velocity prediction program on
 a clean hull with a new sail wardrobe and no crew luggage — and every owner
 quietly discovers it is optimistic. A polar measured over real passages, with
-real sails, is worth more, and the only way to get one per design is for owners
-to pool them.
+real sails and a real waterline, is worth more; the only way to get one per
+design is for owners to pool them.
 
-So when you have collected enough, the web app offers to submit yours. Two
-things make that easy to say yes to:
+**It happens on its own.** Every 500 new points the plugin posts the current
+polar to the collector, and each send replaces the previous one for your boat —
+so the pool holds your best version, not your first one. Nothing to click,
+nothing to remember. Nothing goes out on a clock either: no new points, no
+send. Offshore, a failed send is not lost — it is retried on its own once the
+link comes back.
+
+Two things make it easy to say yes to:
 
 - **Nothing collected here contains a position.** Not one latitude, not one
   longitude — check `runs.jsonl` yourself. A shared polar says what your boat
   does at a given wind and angle, and nothing whatsoever about where you have
-  been or when you were there.
+  been or when you were there. There is no track, and no raw log leaves the
+  boat.
 - **The name is free text.** Your boat's name if you like, a pseudonym if you
   would rather stay anonymous. Nothing verifies it. What matters for the corpus
   is the *model*, as precisely as you can give it: "Beneteau Oceanis 48" is
   useful, "sloop" is not — add the year or the rig variant if the design changed
   during its production run.
 
-Submitting downloads the `.pol` file and opens a **pre-filled issue** on the
-collection repository, with the model, the dimensions your server already
-knows, how many points the polar rests on and over what period. You see the
-whole message before anything is sent; you attach the file and press submit.
-The plugin holds no credentials, talks to no service of ours, and cannot send
-anything on its own.
+The model and the name are asked once, in the plugin configuration, and
+**nothing is collected until they are filled in** — a polar nobody can attach to
+a design helps nobody, including you. Sharing itself is on by default and can
+be switched off in the same place; the plugin then works exactly as before, and
+only the pool stops growing.
 
-Points recorded on a "sailing" declaration are excluded automatically, and the
-button only appears once the polar rests on at least 100 points — a thin polar
-helps nobody, including you.
+What is sent is fixed — speed over ground, true wind, median per cell — so that
+polars from different boats can be compared, and your display settings never
+change it. Points recorded on a "sailing" declaration are left out: nobody else
+can check a declaration. The web app shows the whole payload at any time
+(**See exactly what is sent**), which is the point: a contribution you cannot
+read is one you end up switching off.
 
 ## Idle alert (ntfy)
 
@@ -445,6 +454,8 @@ In the plugin data directory (`~/.signalk/plugin-config-data/signalk-autopolar/`
 | `runs.jsonl` | the accepted points (one condensed stable window each) |
 | `overrides.json` | hand-made exclusions and overridden values |
 | `sail.json` | the current sail plan |
+| `declare.json` | the running "I am sailing" declaration, if any |
+| `share.json` | what has already been sent to the pool, and when |
 
 All plain text, inspectable and repairable by hand from a cockpit with no
 network. A line truncated by a power cut is skipped and the rest of the history
@@ -475,7 +486,9 @@ pure sensor error, pure current, single tack, and the check that correcting a
 lying sensor's STW recovers SOG), `sailchange` (a known step is found where it
 happened, noise alone triggers nothing, and a retro-fitted sail plan moves the
 right points), `notify` (the alert fires once, recovery is announced once, and
-a queued alert still gets out at anchor) and `smoke` —
+a queued alert still gets out at anchor), `share` (nothing leaves the boat
+without consent and a boat identity, one send per threshold, and a failed send
+is retried rather than lost) and `smoke` —
 which runs the whole plugin against a fake SignalK server over a simulated
 passage: starboard beat, tack, port beat, then a leg under engine. It checks
 that points come out of the steady legs, that none comes out of the tack or the
@@ -499,6 +512,13 @@ sudo systemctl restart signalk
 
 No dependencies: nothing to install on board, so no data used offshore.
 
+Then open the plugin configuration and fill in the **boat model** and the
+**name to publish under**. The plugin waits for them before collecting
+anything — see [Sharing your polar](#sharing-your-polar).
+
 ## Licence
 
-MIT.
+MIT. Sharing is the deal, not a legal condition: no licence can compel you to
+send data, and one that pretended to would just be ignored. The plugin asks
+once, defaults to yes, and makes it effortless — that is the whole enforcement
+mechanism.

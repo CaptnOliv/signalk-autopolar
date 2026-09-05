@@ -27,6 +27,7 @@ const { createStore } = require('./lib/store');
 const { createNotifier } = require('./lib/notify');
 const speedo = require('./lib/speedo');
 const sailchange = require('./lib/sailchange');
+const { createShare } = require('./lib/share');
 
 // Seuils plancher de l'enregistrement brut : délibérément plus permissifs que
 // ceux de la collecte, pour que le rejeu puisse explorer des réglages plus
@@ -71,6 +72,7 @@ module.exports = function (app) {
   // une nuit au mouillage ne déclenche rien, et 20 min de vraie nav sans un
   // seul point déclenchent tout de suite.
   let notifier = null;
+  let sharer = null;
   let sailSecs = 0;
   let idleAlerted = false;
   let idleRejects = {};
@@ -251,22 +253,36 @@ module.exports = function (app) {
       ntfyToken: { type: 'string', title: 'ntfy token', default: '' },
       boatModel: {
         type: 'string',
-        title: 'Boat model, as precisely as you can',
+        title: 'Boat model — required',
         description:
-          'Used when you share your polar, so it can be compared with other boats of the same design. "Beneteau Oceanis 48" is useful; "sloop" is not. Add the year or a rig variant if the design changed over its production run.',
+          'Nothing is collected until this and the name below are filled in. The model is what makes a polar useful to anyone else: "Beneteau Oceanis 48 (2013)" is useful, "sloop" is not. Add the year or the rig variant if the design changed during its production run.',
         default: '',
       },
       shareName: {
         type: 'string',
-        title: 'Name to publish the polar under',
+        title: 'Name to publish the polar under — required',
         description:
-          'Free text. Your boat name if you like, a pseudonym if you would rather stay anonymous — nothing checks it. The collected data contains no position of any kind, so a shared polar says nothing about where you sailed.',
+          'Free text: your boat name, or a pseudonym if you would rather stay anonymous — nothing checks it. The collected data contains no position of any kind, not one latitude, so a shared polar says nothing about where you sail.',
         default: '',
       },
-      shareRepo: {
+      sharePolar: {
+        type: 'boolean',
+        title: 'Contribute my polar to the shared pool',
+        description:
+          'This plugin is free and stays free. In exchange it sends the polar it has learned to a shared pool, on its own, every few hundred new points — nothing to click, nothing to remember. Only the polar, the boat model and the name above leave the boat: no position, no track, no raw log. The exact payload is readable at any time in the webapp, under Share. Turning this off leaves the plugin fully working; it just stops the pool from growing.',
+        default: true,
+      },
+      shareEndpoint: {
         type: 'string',
-        title: 'GitHub repository that collects shared polars',
-        default: 'CaptnOliv/autopolar-polars',
+        title: 'Where shared polars are sent',
+        default: 'https://polars.quicky.app/v1/polars',
+      },
+      shareEveryPoints: {
+        type: 'number',
+        title: 'Send an updated polar every N new points',
+        description:
+          'A polar frozen at its first 500 points is worth much less than the same one at 3000, so each send replaces the previous one for your boat. Sending is never on a clock: nothing goes out unless new points came in.',
+        default: 500,
       },
       publishPerformance: {
         type: 'boolean',
@@ -466,6 +482,10 @@ module.exports = function (app) {
       // gelait au retour au mouillage — c'est-à-dire à l'instant précis où le
       // réseau redevient disponible.
       if (notifier) notifier.flush();
+      // Même raisonnement pour le reversement : il ne part pas d'une branche
+      // de la collecte, sinon il ne partirait qu'en nav — c'est-à-dire pas au
+      // mouillage, là où le réseau est le meilleur.
+      if (sharer && store) sharer.maybeSend(opts, store.diskInfo().runCount, sharePayload);
       tick();
     } catch (e) {
       counters.errors = (counters.errors || 0) + 1;
@@ -476,6 +496,17 @@ module.exports = function (app) {
   }
 
   function tick() {
+    // Le consentement se donne une fois, dans la configuration, et il est
+    // indissociable de ce qui rend une polaire partageable : le modèle du
+    // bateau et un nom. Sans eux le plugin ne collecte rien plutôt que
+    // d'accumuler en silence une polaire que personne ne pourra rattacher à
+    // quoi que ce soit.
+    if (!opts.boatModel || !opts.shareName) {
+      live = { reason: 'needs_setup', ts: Date.now() };
+      buffer = [];
+      updateStatus();
+      return;
+    }
     const snap = snapshot();
 
     // Deux verdicts distincts : le permissif décide de l'archivage brut, le
@@ -666,6 +697,7 @@ module.exports = function (app) {
     wind_gusty: 'wind strength too irregular',
     speed_erratic: 'boat speed too irregular (surfing)',
     starting: 'starting up',
+    needs_setup: 'set the boat model and name in the plugin config',
   };
 
   function updateStatus() {
@@ -836,6 +868,73 @@ module.exports = function (app) {
       win = [];
     });
     return out;
+  }
+
+  // ── Ce qui part dans le fonds commun ───────────────────────────────────────
+  //
+  // Un seul endroit construit le contenu partagé : celui qui s'envoie tout
+  // seul tous les N points et celui qu'on lit à l'écran sont le même objet,
+  // sinon la transparence n'est qu'un affichage.
+  //
+  // Axes figés (SOG, vent vrai, médiane) : le corpus doit être comparable
+  // d'un bateau à l'autre, et les réglages d'affichage ne le regardent pas.
+  // SOG parce que c'est la seule vitesse qu'aucun capteur mal calibré ne
+  // fausse — voir lib/speedo.js.
+  function shareBundle() {
+    const polar = polarLib.buildPolar(store.runs(), polarOpts({ shared: '1', speed: 'sog', wind: 'true', stat: 'median' }));
+    const runs = store.runs();
+    const declared = runs.filter((r) => r.engineSource === 'declared').length;
+
+    // La taille et le gréement, si le serveur les connaît : c'est ce qui
+    // permet de comparer deux bateaux du même modèle.
+    const design = app.getSelfPath('design') || {};
+    const val = (n) => (n && n.value !== undefined ? n.value : n);
+    const dims = {};
+    for (const k of ['length', 'beam', 'draft', 'displacement']) {
+      const v = val(design[k]);
+      if (v != null) dims[k] = typeof v === 'object' ? v.overall || v.maximum || v.hull || null : v;
+    }
+
+    let bands = 0;
+    let cells = 0;
+    for (const b of polar.bins) {
+      let any = false;
+      for (const c of b.cells) if (c.n) { cells++; any = true; }
+      if (any) bands++;
+    }
+
+    const info = {
+      model: opts.boatModel,
+      name: opts.shareName,
+      dims,
+      version: require('./package.json').version,
+      points: polar.used,
+      totalPoints: runs.length,
+      declaredExcluded: declared,
+      cells,
+      bands,
+      first: runs.length ? runs[0].ts : null,
+      last: runs.length ? runs[runs.length - 1].ts : null,
+      speed: 'sog',
+      wind: 'true',
+      stat: 'median',
+    };
+    return { polar, info };
+  }
+
+  // Le corps exact envoyé au collecteur. Rien de plus que ce que l'écran
+  // affiche, plus la polaire elle-même sous deux formes : le .pol tel quel
+  // (utilisable dans n'importe quel routeur) et la grille avec le nombre de
+  // mesures par case, sans lequel on ne peut pas pondérer une agrégation.
+  function sharePayload() {
+    const { polar, info } = shareBundle();
+    return Object.assign({ schema: 1 }, info, {
+      pol: polarLib.toPol(polar),
+      bins: polar.bins.map((b) => ({
+        tws: b.ws,
+        cells: b.cells.map((c) => (c.n ? { twa: c.twa, v: c.value, n: c.n } : null)).filter(Boolean),
+      })),
+    });
   }
 
   // ── API + webapp ───────────────────────────────────────────────────────────
@@ -1077,64 +1176,53 @@ module.exports = function (app) {
     });
 
     // ── Partage ────────────────────────────────────────────────────────────
-    // Ce plugin est gratuit et le restera ; l'idée est que chacun reverse la
-    // polaire de son bateau, pour que les modèles courants finissent par en
-    // avoir une bonne. On prépare donc tout — fichier et texte — et on ouvre
-    // une issue pré-remplie : aucun jeton dans le plugin, aucun service à
-    // héberger, et l'utilisateur voit exactement ce qu'il envoie.
+    // Ce plugin est gratuit et le restera ; en échange, la polaire de chaque
+    // bateau retourne au fonds commun. L'envoi est automatique (voir
+    // lib/share.js) : cette route ne sert qu'à le rendre lisible, et le
+    // fichier exact est téléchargeable juste en dessous.
     router.get('/api/share', (req, res) => {
-      const q = Object.assign({}, req.query, { shared: '1' });
-      const polar = polarLib.buildPolar(store.runs(), polarOpts(q));
-      const runs = store.runs();
-      const declared = runs.filter((r) => r.engineSource === 'declared').length;
+      const { info } = shareBundle();
+      const st = sharer ? sharer.state() : {};
+      res.json(
+        Object.assign(info, {
+          enabled: Boolean(opts.sharePolar),
+          endpoint: opts.shareEndpoint,
+          every: opts.shareEveryPoints,
+          configured: Boolean(opts.boatModel && opts.shareName),
+          collected: store.diskInfo().runCount,
+          nextAt: sharer ? sharer.nextAt(opts.shareEveryPoints) : null,
+          lastAt: st.lastAt || null,
+          lastCount: st.lastCount || 0,
+          sent: st.sent || 0,
+          lastError: st.lastError || null,
+        })
+      );
+    });
 
-      // La taille et le gréement, si le serveur les connaît : c'est ce qui
-      // permet de comparer deux bateaux du même modèle.
-      const design = app.getSelfPath('design') || {};
-      const val = (n) => (n && n.value !== undefined ? n.value : n);
-      const dims = {};
-      for (const k of ['length', 'beam', 'draft', 'displacement']) {
-        const v = val(design[k]);
-        if (v != null) dims[k] = typeof v === 'object' ? v.overall || v.maximum || v.hull || null : v;
-      }
+    // Envoyer sans attendre le prochain palier. Le palier suivant reste calé
+    // sur le dernier envoi réussi : appuyer dix fois n'envoie pas dix fois.
+    router.post('/api/share/now', (req, res) => {
+      if (!sharer) return res.json({ ok: false, error: 'not started' });
+      sharer.force();
+      const started = sharer.maybeSend(opts, store.diskInfo().runCount, sharePayload);
+      res.json({ ok: started, state: sharer.state() });
+    });
 
-      let bands = 0;
-      let cells = 0;
-      for (const b of polar.bins) {
-        let any = false;
-        for (const c of b.cells) if (c.n) { cells++; any = true; }
-        if (any) bands++;
-      }
-
-      res.json({
-        model: opts.boatModel,
-        name: opts.shareName,
-        repo: opts.shareRepo,
-        dims,
-        version: require('./package.json').version,
-        points: polar.used,
-        totalPoints: runs.length,
-        declaredExcluded: declared,
-        cells,
-        bands,
-        first: runs.length ? runs[0].ts : null,
-        last: runs.length ? runs[runs.length - 1].ts : null,
-        speed: polar.speed,
-        wind: polar.wind,
-        stat: polar.stat,
-        ready: Boolean(opts.boatModel && opts.shareName && polar.used >= 100),
-      });
+    // Voir exactement ce qui part. Un partage qu'on ne peut pas relire est un
+    // partage qu'on finit par couper.
+    router.get('/api/share.json', (req, res) => {
+      res.type('application/json');
+      res.send(JSON.stringify(sharePayload(), null, 2));
     });
 
     router.get('/api/share.pol', (req, res) => {
-      const q = Object.assign({}, req.query, { shared: '1' });
       const name = (opts.shareName || 'polar').replace(/[^A-Za-z0-9_-]+/g, '-');
       res.type('text/plain');
       // setHeader plutôt que la méthode `set` d'Express : elle existe sur la
       // réponse HTTP native, donc la route marche aussi hors serveur SignalK
       // (aperçu, tests) au lieu de lever une exception à l'exécution.
       res.setHeader('Content-Disposition', `attachment; filename="${name}.pol"`);
-      res.send(polarLib.toPol(polarLib.buildPolar(store.runs(), polarOpts(q))));
+      res.send(polarLib.toPol(shareBundle().polar));
     });
 
     router.get('/api/export.pol', (req, res) => {
@@ -1193,7 +1281,9 @@ module.exports = function (app) {
         ntfyToken: '',
         boatModel: '',
         shareName: '',
-        shareRepo: 'CaptnOliv/autopolar-polars',
+        sharePolar: true,
+        shareEndpoint: 'https://polars.quicky.app/v1/polars',
+        shareEveryPoints: 500,
         publishPerformance: false,
       },
       options || {}
@@ -1224,6 +1314,7 @@ module.exports = function (app) {
     // panne, pas un détail de debug, et personne n'active les logs verbeux
     // avant de partir.
     notifier = createNotifier(opts, (m) => app.error(`[polar] ${m}`));
+    sharer = createShare(path.join(dir, 'share.json'), (m) => app.error(`[polar] ${m}`));
 
     timer = setInterval(safeTick, 1000);
     updateStatus();

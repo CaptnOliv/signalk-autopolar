@@ -78,7 +78,9 @@ async function ticks(fn, n, sim) {
 function startPlugin(options) {
   global.setInterval = capture;
   const p = require('../index.js')(fakeApp);
-  p.start(options);
+  // Identité du bateau : sans elle le plugin ne collecte rien du tout (le
+  // consentement au partage passe par là), et ce test ne testerait plus rien.
+  p.start(Object.assign({ boatModel: 'Test 40', shareName: 'test', sharePolar: false }, options));
   global.setInterval = realSetInterval;
   return [p, tick];
 }

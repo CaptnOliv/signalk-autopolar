@@ -1110,88 +1110,91 @@ async function refreshSpeedo() {
 
 // ── Partage ─────────────────────────────────────────────────────────────────
 //
-// Une issue GitHub pré-remplie, et le fichier téléchargé dans la foulée. Pas
-// de jeton dans le plugin, pas de service à héberger, et surtout : on voit
-// exactement ce qu'on envoie avant de l'envoyer. Une contribution qui se fait
-// à l'aveugle ne se fait pas deux fois.
+// L'envoi est automatique, tous les N points : on n'affiche donc pas un
+// bouton « contribuer » (il se clique une fois, jamais la deuxième), mais un
+// état — ce qui est parti, quand, et ce qui partira ensuite. Plus deux liens
+// pour lire exactement ce qui sort du bateau : un partage qu'on ne peut pas
+// relire est un partage qu'on finit par couper.
 async function refreshShare() {
   const el = $('#share');
   if (!el) return;
   let d;
   try {
-    d = await (await fetch(`${API}/api/share?${query()}`)).json();
+    d = await (await fetch(`${API}/api/share`)).json();
   } catch (e) {
     return;
   }
-  const missing = [];
-  if (!d.model) missing.push('the boat model');
-  if (!d.name) missing.push('a name to publish under');
-  if (d.points < 100) missing.push(`more points (${d.points} of 100)`);
+  const when = (t) => (t ? new Date(t).toLocaleDateString() : null);
+  const deal = `<div class="hint">This plugin is free. In exchange it sends the polar it has learned to a shared
+      pool, so that the next owner of your model starts with something measured instead of the builder's brochure.
+      It goes out on its own — nothing to click, nothing to remember. <b>Nothing collected here contains a
+      position</b>: not one latitude, not one longitude. Only the polar, the model and the name leave the boat.</div>`;
+
+  if (!d.configured) {
+    el.innerHTML =
+      deal +
+      `<div class="hint warn"><b>Nothing is being collected yet.</b> Set the boat model and a name to publish under,
+        in SignalK → Server → Plugin Config → Autopolar. The model is what makes a polar useful to anyone else; the
+        name can be a pseudonym.</div>`;
+    return;
+  }
 
   const dim = (k, u) => (d.dims && d.dims[k] != null ? `${fmt(d.dims[k], 2)} ${u}` : null);
   const facts = [
-    d.model || null,
+    d.model,
+    d.name,
     dim('length', 'm') ? `${dim('length', 'm')} LOA` : null,
-    `${d.points} points`,
+    `${d.points} shareable points`,
     `${d.cells} cells`,
     `${d.bands} wind bands`,
   ].filter(Boolean);
 
-  el.innerHTML =
-    `<div class="hint">This plugin is free. The one thing that would make it better for everyone is the polar of
-      your own boat: most production designs have no honest measured polar anywhere, only the builder's optimistic
-      one. <b>Nothing collected here contains a position</b> — not one latitude, not one longitude — so a shared
-      polar says nothing about where you have been. The name is free text; a pseudonym is fine.</div>
-     <div class="sharefacts">${facts.map((f) => `<span>${f}</span>`).join('')}</div>
-     ${
-       d.declaredExcluded
-         ? `<div class="hint">${d.declaredExcluded} point(s) recorded on a "sailing" declaration are left out —
-            nobody else can check a declaration.</div>`
-         : ''
-     }
-     ${
-       missing.length
-         ? `<div class="hint warn">Still needed: ${missing.join(', ')}.${
-             d.model && d.name ? '' : ' Set them in the plugin configuration (SignalK → Server → Plugin Config).'
-           }</div>`
-         : `<div class="row-actions">
-              <button class="act" id="btnShare">Download and open a submission</button>
-            </div>
-            <div class="hint">The file downloads, then a pre-filled issue opens on
-              <code>${d.repo}</code>. Drag the file into it and send — you will see the whole message first.</div>`
-     }`;
+  const remaining = d.nextAt != null ? Math.max(0, d.nextAt - d.collected) : null;
+  let status;
+  if (!d.enabled) {
+    status = `<div class="hint warn">Sharing is off. The plugin works exactly the same; the pool just stops
+      growing. You can turn it back on in the plugin configuration.</div>`;
+  } else if (d.lastAt) {
+    status = `<div class="hint">Last sent <b>${when(d.lastAt)}</b> at ${d.lastCount} points${
+      remaining != null ? `, next in <b>${remaining}</b> more` : ''
+    }. Each send replaces the previous one for this boat.</div>`;
+  } else {
+    status = `<div class="hint">Nothing sent yet — the first polar goes out at <b>${d.nextAt}</b> points
+      (${d.collected} so far). Each send replaces the previous one for this boat.</div>`;
+  }
 
-  const btn = $('#btnShare');
-  if (!btn) return;
-  btn.onclick = () => {
-    window.open(`${API}/api/share.pol?${query()}`, '_blank');
-    const when = (t) => (t ? new Date(t).toLocaleDateString() : '?');
-    const body = [
-      `**Boat model:** ${d.model}`,
-      `**Published as:** ${d.name}`,
-      d.dims && d.dims.length != null ? `**Length overall:** ${fmt(d.dims.length, 2)} m` : null,
-      d.dims && d.dims.beam != null ? `**Beam:** ${fmt(d.dims.beam, 2)} m` : null,
-      d.dims && d.dims.draft != null ? `**Draught:** ${fmt(d.dims.draft, 2)} m` : null,
-      '',
-      `**Points:** ${d.points} (over ${d.cells} cells, ${d.bands} wind bands)`,
-      `**Collected:** ${when(d.first)} → ${when(d.last)}`,
-      `**Axes:** ${d.speed === 'sog' ? 'speed over ground' : d.speed === 'stwc' ? 'corrected speed through water' : 'speed through water'}, ${
-        d.wind === 'true' ? 'true wind' : 'apparent wind'
-      }, ${d.stat} per cell`,
-      `**Plugin version:** ${d.version}`,
-      '',
-      '_The `.pol` file has just been downloaded — please attach it to this issue._',
-      '',
-      '_No position data of any kind is collected or shared._',
-    ]
-      .filter((x) => x !== null)
-      .join('\n');
-    const url =
-      `https://github.com/${d.repo}/issues/new?title=` +
-      encodeURIComponent(`Polar: ${d.model} — ${d.name}`) +
-      '&body=' +
-      encodeURIComponent(body);
-    window.open(url, '_blank');
+  el.innerHTML =
+    deal +
+    `<div class="sharefacts">${facts.map((f) => `<span>${f}</span>`).join('')}</div>` +
+    status +
+    (d.lastError
+      ? `<div class="hint warn">Last attempt failed: ${d.lastError}. It will be retried on its own — offshore
+          this is normal, and nothing is lost.</div>`
+      : '') +
+    (d.declaredExcluded
+      ? `<div class="hint">${d.declaredExcluded} point(s) recorded on a "sailing" declaration are left out of what
+          is shared — nobody else can check a declaration.</div>`
+      : '') +
+    `<div class="row-actions">
+       <button class="act" id="btnShareNow">Send now</button>
+       <button class="act" id="btnShareSee">See exactly what is sent</button>
+       <button class="act" id="btnSharePol">Download the shared .pol</button>
+     </div>
+     <div class="hint">Sent as speed over ground, true wind, median per cell — fixed, so that polars from
+       different boats can be compared. Your own display settings above do not change what is shared.</div>`;
+
+  $('#btnShareSee').onclick = () => window.open(`${API}/api/share.json`, '_blank');
+  $('#btnSharePol').onclick = () => window.open(`${API}/api/share.pol`, '_blank');
+  $('#btnShareNow').onclick = async () => {
+    const b = $('#btnShareNow');
+    b.disabled = true;
+    b.textContent = 'Sending…';
+    try {
+      await fetch(`${API}/api/share/now`, { method: 'POST' });
+    } catch (e) {
+      /* l'état affiché au prochain rafraîchissement dira ce qui s'est passé */
+    }
+    setTimeout(refreshShare, 1500);
   };
 }
 

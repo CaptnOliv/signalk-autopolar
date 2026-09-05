@@ -43,7 +43,15 @@ global.setInterval = (fn) => {
   return 0;
 };
 const plugin = require('../index.js')(fakeApp);
-plugin.start({ boatModel: 'Example 40', shareName: 'preview' });
+// Le partage part vers un puits local : l'aperçu doit exercer tout le chemin
+// (palier, envoi, état affiché) sans jamais écrire dans le vrai fonds commun.
+const IDENT = {
+  boatModel: 'Example 40',
+  shareName: 'preview',
+  shareEndpoint: 'http://127.0.0.1:8099/dev/collect',
+  shareEveryPoints: 500,
+};
+plugin.start(Object.assign({}, IDENT));
 global.setInterval = realSetInterval;
 // On fait tourner la boucle du plugin pour de vrai : c'est elle qui remplit
 // l'état en direct, la fenêtre en cours et les métriques.
@@ -92,7 +100,7 @@ if (!fs.existsSync(runsFile)) {
   out[100].sog = 14.9; out[100].stw = 14.2;
   fs.writeFileSync(runsFile, out.map((r) => JSON.stringify(r)).join('\n') + '\n');
   plugin.stop();
-  plugin.start({});
+  plugin.start(Object.assign({}, IDENT));
 }
 
 const routes = { GET: {}, POST: {} };
@@ -108,6 +116,14 @@ http
       const [file, type] = STATIC[p];
       res.setHeader('Content-Type', type);
       return res.end(fs.readFileSync(path.join(__dirname, '..', 'public', file)));
+    }
+    if (p === '/dev/collect') {
+      let n = '';
+      req.on('data', (c) => (n += c));
+      return req.on('end', () => {
+        console.log(`[dev collect] ${n.length} octets recus`);
+        res.end('ok');
+      });
     }
     const h = routes[req.method] && routes[req.method][p];
     if (!h) {
