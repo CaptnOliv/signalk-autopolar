@@ -463,11 +463,20 @@ stays usable.
 
 ## Settings
 
-Everything lives in the plugin configuration. The stability thresholds are the
-useful ones: on autopilot, 10-15° of heading variation; hand steering in a
-swell, more like 20-25°. When in doubt, collect wide and **replay the raw log**
-afterwards with tighter thresholds — the operation is reversible as many times
-as you like.
+Everything lives in the plugin configuration, laid out in three tiers. **Data
+sources**, at the top, lists the SignalK path read for each of SOG, STW,
+apparent/true wind, heading, rate of turn, navigation state and attitude — the
+defaults match a standard installation, so only touch this if your boat
+publishes one of them somewhere else (a derived-data plugin under a different
+key, a wind instrument with apparent wind only, and so on). The middle of the
+page is the settings worth knowing about day to day: engine detection, ntfy,
+sharing. **Advanced settings** and **Wind speed columns of the polar**, at the
+bottom, hold the admission-filter thresholds and the polar grid — tuned
+already, and grouped out of the way on purpose. The stability thresholds in
+there are the ones worth understanding if you do go in: on autopilot, 10-15°
+of heading variation; hand steering in a swell, more like 20-25°. When in
+doubt, collect wide and **replay the raw log** afterwards with tighter
+thresholds — the operation is reversible as many times as you like.
 
 `publishPerformance` is left off until the polar has proved itself, and should
 stay off if another polar plugin is installed: they would all write to the same

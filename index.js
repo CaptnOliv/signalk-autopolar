@@ -80,65 +80,44 @@ module.exports = function (app) {
   plugin.schema = {
     type: 'object',
     properties: {
-      windowS: {
-        type: 'number',
-        title: 'Steady state required before a point is recorded (s)',
+      sources: {
+        type: 'object',
+        title: 'Data sources — SignalK paths',
         description:
-          'The boat must hold these conditions without a break. Longer means cleaner but rarer points. 60 s is a good trade-off over a 24 h passage.',
-        default: 60,
-      },
-      awaDriftMaxDeg: {
-        type: 'number',
-        title: 'Max apparent wind angle drift across the window (deg)',
-        description:
-          'THE point-of-sail criterion. The mean of the last third of the window is compared with the mean of the first third: beyond this, you have luffed, borne away or changed the autopilot setting, and the point no longer describes one single regime. Not to be confused with the spread below — apparent wind can swing widely without drifting.',
-        default: 15,
-      },
-      awaSpreadMaxDeg: {
-        type: 'number',
-        title: 'Max apparent wind angle spread (deg)',
-        description:
-          'A ceiling, not a demand for steadiness: in a seaway the masthead unit swings 20-30 deg without the point of sail changing at all, and that swing is exactly what gets averaged. Past the ceiling nothing is being measured any more (rolling gunwale to gunwale).',
-        default: 45,
-      },
-      twsDriftMaxKn: {
-        type: 'number',
-        title: 'Max wind speed drift across the window (kn)',
-        description: 'The wind is clearly building or dying: the start and the end of the window no longer belong to the same polar cell.',
-        default: 3,
-      },
-      twsSpreadMaxKn: {
-        type: 'number',
-        title: 'Max wind speed spread (kn)',
-        description: 'A ceiling: gusts are normal and get averaged, but a huge spread means a squall or a rogue reading.',
-        default: 8,
-      },
-      sogDriftMaxKn: {
-        type: 'number',
-        title: 'Max boat speed drift across the window (kn)',
-        description: 'The boat is still accelerating or slowing down: she has not reached the steady state a polar describes.',
-        default: 1.5,
-      },
-      sogSpreadMaxKn: {
-        type: 'number',
-        title: 'Max boat speed spread (kn)',
-        description: 'A ceiling: surfing down a swell is normal and gets averaged.',
-        default: 2.5,
-      },
-      rotMaxDegS: {
-        type: 'number',
-        title: 'Max mean rate of turn (deg/s)',
-        description:
-          'Catches manoeuvres. This is the mean over the window, not a peak: one slew off a wave invalidates nothing, a sustained turn does.',
-        default: 6,
-      },
-      minSogKn: { type: 'number', title: 'Minimum boat speed to record (kn)', default: 1 },
-      minAwsKn: { type: 'number', title: 'Minimum apparent wind speed (kn)', default: 1.5 },
-      minTwaDeg: {
-        type: 'number',
-        title: 'Minimum true wind angle (deg)',
-        description: 'Below this you are head to wind: nothing to learn, and the true wind computation is very noisy.',
-        default: 25,
+          'The defaults match a standard SignalK installation. Change a path only if this boat publishes that data somewhere else — for instance a derived-data plugin under a different key, or a wind instrument that only feeds apparent wind.',
+        properties: {
+          sogPath: { type: 'string', title: 'Speed over ground', default: 'navigation.speedOverGround' },
+          stwPath: { type: 'string', title: 'Speed through water', default: 'navigation.speedThroughWater' },
+          awsPath: { type: 'string', title: 'Apparent wind speed', default: 'environment.wind.speedApparent' },
+          awaPath: { type: 'string', title: 'Apparent wind angle', default: 'environment.wind.angleApparent' },
+          twsPath: {
+            type: 'string',
+            title: 'True wind speed',
+            description: 'Only read if fresh — recomputed internally from apparent wind otherwise, so a boat with no true-wind source still works.',
+            default: 'environment.wind.speedTrue',
+          },
+          twaPath: {
+            type: 'string',
+            title: 'True wind angle',
+            description: 'Same fallback as true wind speed above.',
+            default: 'environment.wind.angleTrueWater',
+          },
+          cogPath: { type: 'string', title: 'Course over ground', default: 'navigation.courseOverGroundTrue' },
+          headingTruePath: { type: 'string', title: 'Heading (true)', default: 'navigation.headingTrue' },
+          headingMagPath: {
+            type: 'string',
+            title: 'Heading (magnetic)',
+            description: 'Used only when the true heading above is stale.',
+            default: 'navigation.headingMagnetic',
+          },
+          rotPath: { type: 'string', title: 'Rate of turn', default: 'navigation.rateOfTurn' },
+          navStatePath: { type: 'string', title: 'Navigation state', default: 'navigation.state' },
+          attitudePath: {
+            type: 'string',
+            title: 'Attitude (roll/pitch, for sea state)',
+            default: 'navigation.attitude',
+          },
+        },
       },
       engineOffRpm: {
         type: 'number',
@@ -156,83 +135,6 @@ module.exports = function (app) {
         type: 'number',
         title: 'How long a "sailing" declaration lasts (minutes)',
         default: 90,
-      },
-      engineRpmFactor: {
-        type: 'number',
-        title: 'Multiplier from propulsion.*.revolutions to RPM',
-        description:
-          'The SignalK spec says revolutions are in hertz, so 60 converts to RPM — that is the default. Some gateways publish RPM straight into that path, which then reads 60x too high; others publish a raw pulse rate. The live panel shows the raw value next to the converted one, so you can read the true ratio off the display while the engine runs and set this once. Collection is unaffected either way: any positive multiplier still tells a running engine from a stopped one.',
-        default: 60,
-      },
-      autostateFallback: {
-        type: 'boolean',
-        title: 'Fall back on navigation.state when engine data is missing',
-        description:
-          'If RPM stops arriving (broken MQTT link), accept navigation.state = sailing as proof the engine is off. Safe in practice: signalk-autostate keeps the last known state, so it stays on "motoring" if the outage happens under engine. Affected points are tagged and can be filtered out afterwards.',
-        default: true,
-      },
-      staleMs: { type: 'number', title: 'Max age for a reading to count as fresh (ms)', default: 6000 },
-      engineStaleMs: {
-        type: 'number',
-        title: 'Max age for engine data (ms)',
-        description:
-          'Much longer than the rest, and it matters: engine RPM often arrives on a slow bridge (once a minute over MQTT from a Cerbo GX, for instance) while wind and speed come off the NMEA 2000 bus several times a second. With one common threshold the engine would read "unknown" 54 s out of every 60 and nothing would ever be collected.',
-        default: 180000,
-      },
-      rawSamples: {
-        type: 'boolean',
-        title: 'Also log raw data, second by second',
-        description:
-          'The safety net: lets you rebuild every point with different thresholds without sailing the passage again. About 15 MB per 30 h, and only while sailing.',
-        default: true,
-      },
-      maxSampleMB: { type: 'number', title: 'Max size of the raw log (MB)', default: 500 },
-      twsBins: {
-        type: 'array',
-        title: 'Wind speed columns of the polar (kn)',
-        description:
-          'Bin centres. Boundaries fall halfway between two centres. A 2 kn step keeps enough resolution for routing software; wider bins gather more points per cell but blur the curve.',
-        items: { type: 'number' },
-        default: [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 30],
-      },
-      twaStep: { type: 'number', title: 'Angle step of the polar (deg)', default: 5 },
-      minSamples: {
-        type: 'number',
-        title: 'Minimum points before a polar cell is shown',
-        default: 1,
-      },
-      sailHistoryDays: {
-        type: 'number',
-        title: 'Hide handled sail-plan stretches older than (days)',
-        description:
-          'A stretch you have corrected or confirmed stops asking for attention once it is this old. Without it the list only ever grows, one passage after another, and the periods that still need a decision get lost among those that do not. Nothing is deleted — a toggle brings them all back.',
-        default: 2,
-      },
-      sailChangeSide: {
-        type: 'number',
-        title: 'Points compared each side of a candidate sail change',
-        description:
-          'Used by the sail-change suggester. Wider is less noisy but blind to short-lived configurations — a sail plan that only lasted 40 minutes disappears into the averages. 6 works well on a day-long passage.',
-        default: 6,
-      },
-      sailChangeMinStepKn: {
-        type: 'number',
-        title: 'Minimum performance step to flag a sail change (kn)',
-        description:
-          'How big a jump in "faster or slower than the polar predicts" is worth flagging. Lower catches more real changes and a lot of noise with them; the suggestions are candidates to review, never a verdict.',
-        default: 0.5,
-      },
-      seaStateModerateDeg: {
-        type: 'number',
-        title: 'Pitch swing above which the sea counts as moderate (deg)',
-        description:
-          'Sea state is measured, not typed in: it is the peak-to-peak pitch over the window. These two thresholds turn that number into a word, and they are a starting guess for a 15 m boat — check them against a day you remember and adjust. The measurement itself is stored raw either way.',
-        default: 3,
-      },
-      seaStateRoughDeg: {
-        type: 'number',
-        title: 'Pitch swing above which the sea counts as rough (deg)',
-        default: 8,
       },
       vmgOffsetsDeg: {
         type: 'array',
@@ -272,11 +174,6 @@ module.exports = function (app) {
           'This plugin is free and stays free. In exchange it sends the polar it has learned to a shared pool, on its own, every few hundred new points — nothing to click, nothing to remember. Only the polar, the boat model and the name above leave the boat: no position, no track, no raw log. The exact payload is readable at any time in the webapp, under Share. Turning this off leaves the plugin fully working; it just stops the pool from growing.',
         default: true,
       },
-      shareEndpoint: {
-        type: 'string',
-        title: 'Where shared polars are sent',
-        default: 'https://autopolar.quicky.app/v1/polars',
-      },
       shareEveryPoints: {
         type: 'number',
         title: 'Send an updated polar every N new points',
@@ -290,6 +187,157 @@ module.exports = function (app) {
         description:
           'Leave off until the polar has proved itself, and off entirely if another polar plugin is installed: they would all write to the same paths.',
         default: false,
+      },
+      polarBins: {
+        type: 'object',
+        title: 'Wind speed columns of the polar (kn)',
+        description: 'Rarely needs to change — the default already matches the resolution routing software expects.',
+        properties: {
+          twsBins: {
+            type: 'array',
+            title: 'Bin centres (kn)',
+            description:
+              'Boundaries fall halfway between two centres. A 2 kn step keeps enough resolution for routing software; wider bins gather more points per cell but blur the curve.',
+            items: { type: 'number' },
+            default: [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 30],
+          },
+        },
+      },
+      advanced: {
+        type: 'object',
+        title: 'Advanced settings — do not change unless you know exactly what you are doing',
+        description: 'The defaults below were tuned on real passages. Loosening them lets in noise; tightening them starves the polar of points.',
+        properties: {
+          windowS: {
+            type: 'number',
+            title: 'Steady state required before a point is recorded (s)',
+            description:
+              'The boat must hold these conditions without a break. Longer means cleaner but rarer points. 60 s is a good trade-off over a 24 h passage.',
+            default: 60,
+          },
+          awaDriftMaxDeg: {
+            type: 'number',
+            title: 'Max apparent wind angle drift across the window (deg)',
+            description:
+              'THE point-of-sail criterion. The mean of the last third of the window is compared with the mean of the first third: beyond this, you have luffed, borne away or changed the autopilot setting, and the point no longer describes one single regime. Not to be confused with the spread below — apparent wind can swing widely without drifting.',
+            default: 15,
+          },
+          awaSpreadMaxDeg: {
+            type: 'number',
+            title: 'Max apparent wind angle spread (deg)',
+            description:
+              'A ceiling, not a demand for steadiness: in a seaway the masthead unit swings 20-30 deg without the point of sail changing at all, and that swing is exactly what gets averaged. Past the ceiling nothing is being measured any more (rolling gunwale to gunwale).',
+            default: 45,
+          },
+          twsDriftMaxKn: {
+            type: 'number',
+            title: 'Max wind speed drift across the window (kn)',
+            description: 'The wind is clearly building or dying: the start and the end of the window no longer belong to the same polar cell.',
+            default: 3,
+          },
+          twsSpreadMaxKn: {
+            type: 'number',
+            title: 'Max wind speed spread (kn)',
+            description: 'A ceiling: gusts are normal and get averaged, but a huge spread means a squall or a rogue reading.',
+            default: 8,
+          },
+          sogDriftMaxKn: {
+            type: 'number',
+            title: 'Max boat speed drift across the window (kn)',
+            description: 'The boat is still accelerating or slowing down: she has not reached the steady state a polar describes.',
+            default: 1.5,
+          },
+          sogSpreadMaxKn: {
+            type: 'number',
+            title: 'Max boat speed spread (kn)',
+            description: 'A ceiling: surfing down a swell is normal and gets averaged.',
+            default: 2.5,
+          },
+          rotMaxDegS: {
+            type: 'number',
+            title: 'Max mean rate of turn (deg/s)',
+            description:
+              'Catches manoeuvres. This is the mean over the window, not a peak: one slew off a wave invalidates nothing, a sustained turn does.',
+            default: 6,
+          },
+          minSogKn: { type: 'number', title: 'Minimum boat speed to record (kn)', default: 1 },
+          minAwsKn: { type: 'number', title: 'Minimum apparent wind speed (kn)', default: 1.5 },
+          minTwaDeg: {
+            type: 'number',
+            title: 'Minimum true wind angle (deg)',
+            description: 'Below this you are head to wind: nothing to learn, and the true wind computation is very noisy.',
+            default: 25,
+          },
+          engineRpmFactor: {
+            type: 'number',
+            title: 'Multiplier from propulsion.*.revolutions to RPM',
+            description:
+              'The SignalK spec says revolutions are in hertz, so 60 converts to RPM — that is the default. Some gateways publish RPM straight into that path, which then reads 60x too high; others publish a raw pulse rate. The live panel shows the raw value next to the converted one, so you can read the true ratio off the display while the engine runs and set this once. Collection is unaffected either way: any positive multiplier still tells a running engine from a stopped one.',
+            default: 60,
+          },
+          autostateFallback: {
+            type: 'boolean',
+            title: 'Fall back on navigation.state when engine data is missing',
+            description:
+              'If RPM stops arriving (broken MQTT link), accept navigation.state = sailing as proof the engine is off. Safe in practice: signalk-autostate keeps the last known state, so it stays on "motoring" if the outage happens under engine. Affected points are tagged and can be filtered out afterwards.',
+            default: true,
+          },
+          staleMs: { type: 'number', title: 'Max age for a reading to count as fresh (ms)', default: 6000 },
+          engineStaleMs: {
+            type: 'number',
+            title: 'Max age for engine data (ms)',
+            description:
+              'Much longer than the rest, and it matters: engine RPM often arrives on a slow bridge (once a minute over MQTT from a Cerbo GX, for instance) while wind and speed come off the NMEA 2000 bus several times a second. With one common threshold the engine would read "unknown" 54 s out of every 60 and nothing would ever be collected.',
+            default: 180000,
+          },
+          rawSamples: {
+            type: 'boolean',
+            title: 'Also log raw data, second by second',
+            description:
+              'The safety net: lets you rebuild every point with different thresholds without sailing the passage again. About 15 MB per 30 h, and only while sailing.',
+            default: true,
+          },
+          maxSampleMB: { type: 'number', title: 'Max size of the raw log (MB)', default: 500 },
+          twaStep: { type: 'number', title: 'Angle step of the polar (deg)', default: 5 },
+          minSamples: {
+            type: 'number',
+            title: 'Minimum points before a polar cell is shown',
+            default: 1,
+          },
+          sailHistoryDays: {
+            type: 'number',
+            title: 'Hide handled sail-plan stretches older than (days)',
+            description:
+              'A stretch you have corrected or confirmed stops asking for attention once it is this old. Without it the list only ever grows, one passage after another, and the periods that still need a decision get lost among those that do not. Nothing is deleted — a toggle brings them all back.',
+            default: 2,
+          },
+          sailChangeSide: {
+            type: 'number',
+            title: 'Points compared each side of a candidate sail change',
+            description:
+              'Used by the sail-change suggester. Wider is less noisy but blind to short-lived configurations — a sail plan that only lasted 40 minutes disappears into the averages. 6 works well on a day-long passage.',
+            default: 6,
+          },
+          sailChangeMinStepKn: {
+            type: 'number',
+            title: 'Minimum performance step to flag a sail change (kn)',
+            description:
+              'How big a jump in "faster or slower than the polar predicts" is worth flagging. Lower catches more real changes and a lot of noise with them; the suggestions are candidates to review, never a verdict.',
+            default: 0.5,
+          },
+          seaStateModerateDeg: {
+            type: 'number',
+            title: 'Pitch swing above which the sea counts as moderate (deg)',
+            description:
+              'Sea state is measured, not typed in: it is the peak-to-peak pitch over the window. These two thresholds turn that number into a word, and they are a starting guess for a 15 m boat — check them against a day you remember and adjust. The measurement itself is stored raw either way.',
+            default: 3,
+          },
+          seaStateRoughDeg: {
+            type: 'number',
+            title: 'Pitch swing above which the sea counts as rough (deg)',
+            default: 8,
+          },
+        },
       },
     },
   };
@@ -383,16 +431,16 @@ module.exports = function (app) {
   }
 
   function snapshot() {
-    const sog = num('navigation.speedOverGround', kn);
-    const stw = num('navigation.speedThroughWater', kn);
-    const aws = num('environment.wind.speedApparent', kn);
-    const awa = num('environment.wind.angleApparent', (v) => wrap180(deg(v)));
-    let tws = num('environment.wind.speedTrue', kn);
-    let twa = num('environment.wind.angleTrueWater', (v) => wrap180(deg(v)));
-    const cog = num('navigation.courseOverGroundTrue', deg);
-    let hdg = num('navigation.headingTrue', deg);
-    if (!hdg.fresh) hdg = num('navigation.headingMagnetic', deg);
-    const rot = num('navigation.rateOfTurn', deg);
+    const sog = num(opts.sogPath, kn);
+    const stw = num(opts.stwPath, kn);
+    const aws = num(opts.awsPath, kn);
+    const awa = num(opts.awaPath, (v) => wrap180(deg(v)));
+    let tws = num(opts.twsPath, kn);
+    let twa = num(opts.twaPath, (v) => wrap180(deg(v)));
+    const cog = num(opts.cogPath, deg);
+    let hdg = num(opts.headingTruePath, deg);
+    if (!hdg.fresh) hdg = num(opts.headingMagPath, deg);
+    const rot = num(opts.rotPath, deg);
 
     // Vent vrai : on préfère celui du serveur (signalk-derived-data résout
     // déjà les priorités de source et applique la dérive), et on ne le
@@ -409,7 +457,7 @@ module.exports = function (app) {
     }
 
     const eng = readEngine();
-    const navStateNode = read('navigation.state');
+    const navStateNode = read(opts.navStatePath);
 
     return {
       ts: Date.now(),
@@ -422,7 +470,7 @@ module.exports = function (app) {
       hdg: hdg.v,
       cog: cog.v,
       ...(() => {
-        const a = read('navigation.attitude');
+        const a = read(opts.attitudePath);
         const v = a && a.value ? a.value : null;
         return {
           roll: v && typeof v.roll === 'number' ? deg(v.roll) : null,
@@ -1245,8 +1293,34 @@ module.exports = function (app) {
 
   // ── Cycle de vie ───────────────────────────────────────────────────────────
   plugin.start = function (options) {
+    // Le formulaire de config envoie les réglages "avancés" imbriqués sous
+    // sources / polarBins / advanced (voir plugin.schema) — mais tout le
+    // reste du fichier lit opts.xxx à plat, sans savoir dans quel groupe le
+    // champ vit dans le schéma. On aplatit donc ici, une fois, plutôt que de
+    // réécrire une quarantaine de références. Les tests qui appellent
+    // plugin.start() avec des options déjà plates (sans ces groupes)
+    // continuent de marcher tels quels : il n'y a alors simplement rien à
+    // aplatir.
+    const raw = options || {};
+    const flatOptions = Object.assign({}, raw, raw.sources, raw.polarBins, raw.advanced);
+    delete flatOptions.sources;
+    delete flatOptions.polarBins;
+    delete flatOptions.advanced;
+
     opts = Object.assign(
       {
+        sogPath: 'navigation.speedOverGround',
+        stwPath: 'navigation.speedThroughWater',
+        awsPath: 'environment.wind.speedApparent',
+        awaPath: 'environment.wind.angleApparent',
+        twsPath: 'environment.wind.speedTrue',
+        twaPath: 'environment.wind.angleTrueWater',
+        cogPath: 'navigation.courseOverGroundTrue',
+        headingTruePath: 'navigation.headingTrue',
+        headingMagPath: 'navigation.headingMagnetic',
+        rotPath: 'navigation.rateOfTurn',
+        navStatePath: 'navigation.state',
+        attitudePath: 'navigation.attitude',
         windowS: 60,
         awaDriftMaxDeg: 15,
         awaSpreadMaxDeg: 45,
@@ -1286,7 +1360,7 @@ module.exports = function (app) {
         shareEveryPoints: 500,
         publishPerformance: false,
       },
-      options || {}
+      flatOptions
     );
 
     const dir = app.getDataDirPath();
