@@ -1,7 +1,7 @@
 # Collecteur de polaires
 
 Reçoit ce que `signalk-autopolar` reverse (`shareEndpoint`, par défaut
-`https://polars.quicky.app/v1/polars`). Sans dépendance, sans base de données,
+`https://autopolar.quicky.app/v1/polars`). Sans dépendance, sans base de données,
 sans secret : les données qui arrivent ne contiennent aucune position, donc il
 n'y a rien à protéger — seulement à conserver.
 
@@ -21,11 +21,11 @@ docker build -t polars-collector tool/collector/
 docker run -d --name polars \
   --network veille-net \
   -v /home/oliv/containers/polars/data:/data \
-  -e VIRTUAL_HOST=polars.quicky.app \
+  -e VIRTUAL_HOST=autopolar.quicky.app \
   -e VIRTUAL_PORT=8080 \
-  -e LETSENCRYPT_HOST=polars.quicky.app \
+  -e LETSENCRYPT_HOST=autopolar.quicky.app \
   polars-collector
 ```
 
-Il faut l'enregistrement DNS `polars.quicky.app` avant de lancer le conteneur,
+Il faut l'enregistrement DNS `autopolar.quicky.app` avant de lancer le conteneur,
 sinon acme-companion échoue sur le challenge et le certificat n'est pas émis.

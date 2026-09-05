@@ -275,7 +275,7 @@ module.exports = function (app) {
       shareEndpoint: {
         type: 'string',
         title: 'Where shared polars are sent',
-        default: 'https://polars.quicky.app/v1/polars',
+        default: 'https://autopolar.quicky.app/v1/polars',
       },
       shareEveryPoints: {
         type: 'number',
@@ -1282,7 +1282,7 @@ module.exports = function (app) {
         boatModel: '',
         shareName: '',
         sharePolar: true,
-        shareEndpoint: 'https://polars.quicky.app/v1/polars',
+        shareEndpoint: 'https://autopolar.quicky.app/v1/polars',
         shareEveryPoints: 500,
         publishPerformance: false,
       },
