@@ -287,9 +287,9 @@ default) with the VMG loss in knots and in percent.
 
 ## Web app
 
-`http://<server>:3000/signalk-autopolar/` — SignalK mounts `public/` under the
-package name; `/plugins/signalk-autopolar/` is reserved for plugin metadata and
-serves only the API (`/api/...`).
+`http://<server>:3000/@captnoliv/signalk-autopolar/` — SignalK mounts `public/`
+under the package name; `/plugins/signalk-autopolar/` is reserved for plugin
+metadata and serves only the API (`/api/...`).
 
 - **Live state** — recording or not, and exactly why; progress of the current
   window; every input with its freshness and age.
@@ -518,7 +518,7 @@ From the SignalK app store, or:
 
 ```bash
 cd ~/.signalk
-npm install signalk-autopolar
+npm install @captnoliv/signalk-autopolar
 sudo systemctl restart signalk
 ```
 

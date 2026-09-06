@@ -1015,7 +1015,7 @@ module.exports = function (app) {
       res.type(type);
       fs.createReadStream(path.join(pub, file)).pipe(res);
     };
-    // SignalK sert lui-même public/ sous /signalk-autopolar/ (keyword
+    // SignalK sert lui-même public/ sous /<packageName>/ (keyword
     // « signalk-webapp ») et réserve /plugins/<id>/ pour les métadonnées du
     // plugin : la racine ci-dessous n'est donc jamais atteinte, elle n'est là
     // que pour l'aperçu hors serveur (test/preview.js).

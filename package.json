@@ -1,6 +1,9 @@
 {
-  "name": "signalk-autopolar",
+  "name": "@captnoliv/signalk-autopolar",
   "version": "0.5.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Learns your boat's polar by watching how she is actually sailed — never under engine, never at anchor. Web app, SOG/STW and true/apparent comparison, speed-sensor diagnostic, .pol export.",
   "main": "index.js",
   "scripts": {
