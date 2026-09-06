@@ -202,6 +202,15 @@ assert.ok(loose.count > dry.count, 'une fenêtre plus courte donne plus de point
 assert.ok(call('GET /api/export.pol', { min: '1' }).startsWith('twa/tws\t'));
 assert.ok(call('GET /api/export.csv', { min: '1' }).includes('twa,'));
 
+// Un coup de pouce : le bandeau ne s'ouvre pas sur une polaire de 20 points,
+// et une réponse le ferme définitivement. La règle elle-même est testée nue
+// dans support.test.js — ici on vérifie juste qu'elle est bien câblée.
+const sup = call('GET /api/support');
+assert.strictEqual(sup.ask, false, 'rien à remercier avant que la polaire serve à quelque chose');
+assert.strictEqual(sup.links.kofi, 'https://ko-fi.com/captnoliv');
+call('POST /api/support/answer', {}, { outcome: 'never' });
+assert.strictEqual(call('GET /api/support').ask, false);
+
 // Tag de voilure.
 call('POST /api/sail', {}, { main: '1ris', head: 'genoa' });
 assert.deepStrictEqual(call('GET /api/status').sail, { main: '1ris', head: 'genoa' });

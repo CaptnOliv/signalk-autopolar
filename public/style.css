@@ -313,3 +313,56 @@ code { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color
 }
 .hint.warn { color: var(--warning); }
 .msg.warn { color: var(--warning); }
+
+/* ── Un coup de pouce ───────────────────────────────────────────────────────
+   Un bandeau, pas un modal, et dans le flux de la page : il pousse le contenu
+   vers le bas au lieu de le recouvrir. Cet écran peut être ouvert en nav de
+   nuit — rien ne doit jamais venir se mettre entre l'équipage et la polaire.
+   Un liseré discret plutôt qu'une couleur d'alerte : ce n'est pas une panne. */
+.supportbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-left: 3px solid var(--good);
+  border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
+  font-size: 13px; color: var(--ink-2);
+}
+/* `display: flex` sur la classe l'emporte sur le `[hidden] { display: none }`
+   du navigateur : sans cette ligne, le bandeau reste visible et VIDE tant que
+   rien ne doit être demandé. */
+.supportbar[hidden] { display: none; }
+.supportbar b { color: var(--ink); font-weight: 600; }
+.supportbar .txt { flex: 1 1 320px; line-height: 1.55; }
+.supportbar .why { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+.supportbar .acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* Les deux liens doivent avoir l'air de boutons comme les autres : `button.act`
+   ne s'applique qu'aux <button>, et un <a> nu se lit comme un lien souligné au
+   milieu d'une rangée de boutons. Ce sont bien des liens (nouvel onglet,
+   clic droit, copie de l'adresse) — seule l'apparence est alignée. */
+.supportbar a.act {
+  background: var(--surface-2); border: 1px solid var(--hairline); color: var(--ink-2);
+  font: inherit; font-size: 12px; padding: 5px 11px; border-radius: 7px;
+  text-decoration: none; white-space: nowrap;
+}
+.supportbar a.act:hover { color: var(--ink); }
+/* Les deux gestes demandés se ressemblent : ni l'un ni l'autre n'est le
+   bouton par défaut, on ne pousse pas au don plutôt qu'à l'étoile. */
+.supportbar .act.give { color: var(--ink); border-color: rgba(12, 163, 12, 0.45); }
+.supportbar .act.quiet { color: var(--muted); border-color: transparent; background: none; }
+.supportbar .act.quiet:hover { color: var(--ink-2); }
+
+/* Une seule règle pour les deux barres de liens, en haut et en bas : elles
+   doivent se ressembler, donc elles se décrivent au même endroit. Seul le
+   filet de séparation change de côté — le haut s'appuie sur celui du header,
+   le bas pose le sien. */
+footer, .linkbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px;
+  font-size: 12px; color: var(--muted);
+}
+footer a, .linkbar a { color: var(--ink-2); text-decoration: none; }
+footer a:hover, .linkbar a:hover { color: var(--ink); text-decoration: underline; }
+
+/* Tout en haut de la page, au-dessus du titre : c'est la première chose lue,
+   et elle ne coûte rien à qui n'en veut pas. Pas de filet à elle — celui du
+   header, juste en dessous, suffit à la détacher. */
+.linkbar { margin: 0 0 12px; }
+footer { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--hairline); }

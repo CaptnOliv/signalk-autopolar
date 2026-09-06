@@ -28,6 +28,17 @@ const { createNotifier } = require('./lib/notify');
 const speedo = require('./lib/speedo');
 const sailchange = require('./lib/sailchange');
 const { createShare } = require('./lib/share');
+const { createSupport } = require('./lib/support');
+
+// Les liens du pied de page et du bandeau « un coup de pouce ». En dur, et
+// pas dans la configuration : ce n'est pas un réglage du bateau, et un lien de
+// don modifiable dans un formulaire serait une porte ouverte pour détourner
+// les cafés de quelqu'un d'autre.
+const LINKS = {
+  github: 'https://github.com/CaptnOliv/signalk-autopolar',
+  kofi: 'https://ko-fi.com/captnoliv',
+  issues: 'https://github.com/CaptnOliv/signalk-autopolar/issues',
+};
 
 // Seuils plancher de l'enregistrement brut : délibérément plus permissifs que
 // ceux de la collecte, pour que le rejeu puisse explorer des réglages plus
@@ -73,6 +84,7 @@ module.exports = function (app) {
   // seul point déclenchent tout de suite.
   let notifier = null;
   let sharer = null;
+  let supporter = null;
   let sailSecs = 0;
   let idleAlerted = false;
   let idleRejects = {};
@@ -187,6 +199,13 @@ module.exports = function (app) {
         description:
           'Leave off until the polar has proved itself, and off entirely if another polar plugin is installed: they would all write to the same paths.',
         default: false,
+      },
+      supportPrompt: {
+        type: 'boolean',
+        title: 'Let the web app ask for a star or a coffee, once',
+        description:
+          'The plugin is free and has no account, no telemetry and no nag screen on startup. Once the polar it built for you is actually usable, the web app shows a single dismissible banner offering to star the repository or buy the author a coffee — at most twice in the life of the installation, never again once you have answered. Turn this off and it never appears at all.',
+        default: true,
       },
       polarBins: {
         type: 'object',
@@ -1273,6 +1292,40 @@ module.exports = function (app) {
       res.send(polarLib.toPol(shareBundle().polar));
     });
 
+    // ── Un coup de pouce ───────────────────────────────────────────────────
+    // Le plugin est gratuit, sans compte et sans télémétrie ; les serveurs qui
+    // le font vivre, eux, se paient. La règle d'affichage vit dans
+    // lib/support.js — ici on ne fait que la servir, avec de quoi écrire une
+    // phrase qui dise CE QUI VIENT D'ÊTRE LIVRÉ avant de demander quoi que ce
+    // soit.
+    router.get('/api/support', (req, res) => {
+      if (!supporter || !store) return res.json({ ask: false, why: 'not started', links: LINKS });
+      const q = qualitySummary();
+      res.json(
+        Object.assign(supporter.status(q.solidCells, opts.supportPrompt), {
+          links: LINKS,
+          points: q.points,
+          solidCells: q.solidCells,
+          windBands: q.windBands,
+          grade: q.grade,
+        })
+      );
+    });
+
+    // Consommé à l'affichage RÉEL, pas à la décision : hors ligne la webapp
+    // n'affiche rien (un lien Ko-fi ouvrirait un onglet mort) et l'occasion ne
+    // doit pas être brûlée pour autant.
+    router.post('/api/support/seen', (req, res) => {
+      if (!supporter || !store) return res.json({ ok: false });
+      supporter.markShown(qualitySummary().solidCells);
+      res.json({ ok: true });
+    });
+
+    router.post('/api/support/answer', (req, res) => {
+      if (!supporter) return res.json({ ok: false });
+      res.json({ ok: true, state: supporter.answer(String(body(req).outcome || '')) });
+    });
+
     router.get('/api/export.pol', (req, res) => {
       res.type('text/plain');
       res.send(polarLib.toPol(polarLib.buildPolar(store.runs(), polarOpts(req.query))));
@@ -1359,6 +1412,7 @@ module.exports = function (app) {
         shareEndpoint: 'https://autopolar.quicky.app/v1/polars',
         shareEveryPoints: 500,
         publishPerformance: false,
+        supportPrompt: true,
       },
       flatOptions
     );
@@ -1389,6 +1443,10 @@ module.exports = function (app) {
     // avant de partir.
     notifier = createNotifier(opts, (m) => app.error(`[polar] ${m}`));
     sharer = createShare(path.join(dir, 'share.json'), (m) => app.error(`[polar] ${m}`));
+    // Le jalon n'est pas un nombre de points ni un nombre d'ouvertures de la
+    // webapp, mais le moment où la polaire devient exploitable : 15 cases
+    // étayées par au moins trois mesures. Avant ça, il n'y a rien à remercier.
+    supporter = createSupport(path.join(dir, 'support.json'), { minProgress: 15, againAfterProgress: 15 });
 
     timer = setInterval(safeTick, 1000);
     updateStatus();

@@ -18,11 +18,30 @@
 </head>
 <body>
 
+<!-- Les mêmes liens qu'en pied de page, en haut aussi : c'est le canal
+     permanent, celui qui ne coûte rien à personne et ne dépend d'aucun jalon.
+     Le pied de page est lu par ceux qui déroulent jusqu'au bout — ici, par
+     tous les autres. Écrits en dur des deux côtés plutôt qu'injectés par
+     l'API : ces liens doivent rester lisibles même plugin arrêté. -->
+<div class="linkbar">
+  <a href="https://github.com/CaptnOliv/signalk-autopolar" target="_blank" rel="noopener">★ Star on GitHub</a>
+  <a href="https://ko-fi.com/captnoliv" target="_blank" rel="noopener">☕ Buy me a coffee</a>
+  <a href="https://github.com/CaptnOliv/signalk-autopolar/issues" target="_blank" rel="noopener">Report an issue</a>
+</div>
+
 <header>
   <h1>Autopolar</h1>
   <span class="sub" id="headSub">automatic learning</span>
   <button class="act" id="btnReload" title="Reload everything and re-centre the wind bands on the wind right now">refresh</button>
 </header>
+
+<!-- Un coup de pouce. Jamais un modal, jamais au chargement : le bandeau
+     n'apparaît qu'une fois la polaire devenue exploitable, jamais hors ligne,
+     et deux fois au maximum dans la vie de l'installation. Il est dans le flux
+     normal de la page, pas par-dessus : cet écran peut être ouvert en nav de
+     nuit, rien ne doit venir recouvrir la polaire. Règle complète dans
+     lib/support.js. -->
+<div class="supportbar" id="support" hidden></div>
 
 <!-- La qualité de la polaire, avant tout le reste : c'est elle qui dit si on
      peut déjà s'en servir, et sinon ce qu'il reste à naviguer. -->
@@ -177,6 +196,16 @@
     </section>
   </div>
 </div>
+
+<!-- Les liens permanents, sans condition ni compteur : c'est le canal qui ne
+     dérange personne. Écrits en dur plutôt que remplis par l'API — ce pied de
+     page doit rester lisible même quand le plugin est arrêté. -->
+<footer>
+  <span>Autopolar — free, open source (MIT), no account, no telemetry.</span>
+  <a href="https://github.com/CaptnOliv/signalk-autopolar" target="_blank" rel="noopener">★ Star on GitHub</a>
+  <a href="https://ko-fi.com/captnoliv" target="_blank" rel="noopener">☕ Buy me a coffee</a>
+  <a href="https://github.com/CaptnOliv/signalk-autopolar/issues" target="_blank" rel="noopener">Report an issue</a>
+</footer>
 
 <script src="app.js"></script>
 </body>

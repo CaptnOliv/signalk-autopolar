@@ -1198,6 +1198,64 @@ async function refreshShare() {
   };
 }
 
+// ── Un coup de pouce ────────────────────────────────────────────────────────
+// Quand demander est décidé côté serveur (lib/support.js) : la règle doit
+// valoir pour le BATEAU, pas pour le navigateur. La webapp s'ouvre depuis le
+// téléphone, la tablette et le portable du bord ; un localStorage poserait la
+// question trois fois, puis une quatrième après un vidage de cache.
+//
+// Il reste deux décisions ici, et elles appartiennent au client :
+//   — hors ligne, on n'affiche rien. Un lien Ko-fi cliqué au large ouvre un
+//     onglet mort, et l'unique occasion serait brûlée sans que personne
+//     n'ait rien pu faire.
+//   — le serveur n'est prévenu qu'à l'affichage RÉEL, jamais à la décision.
+let supportShown = false;
+
+async function refreshSupport() {
+  const el = $('#support');
+  if (!el || supportShown || navigator.onLine === false) return;
+  let d;
+  try {
+    d = await (await fetch(`${API}/api/support`)).json();
+  } catch (e) {
+    return;
+  }
+  if (!d.ask) return;
+  supportShown = true;
+
+  const L = d.links || {};
+  // On dit d'abord ce qui vient d'être livré, et ensuite seulement on demande.
+  // Une phrase générique (« vous aimez l'app ? ») ne vaut rien : ce qui rend
+  // la question légitime, c'est qu'elle arrive après la preuve.
+  el.innerHTML =
+    `<div class="txt">Your polar now stands on <b>${d.solidCells}</b> cells backed by three measurements or more,
+       across <b>${d.windBands}</b> wind band(s) — it is solid enough to route with.
+       <span class="why">Autopolar is free, has no account and collects no telemetry. The servers behind it are not
+       free. If it earned it, a star or a coffee is what keeps it going.</span></div>
+     <div class="acts">
+       <a class="act give" id="supStar" href="${L.github}" target="_blank" rel="noopener">★ Star on GitHub</a>
+       <a class="act give" id="supKofi" href="${L.kofi}" target="_blank" rel="noopener">☕ Buy me a coffee</a>
+       <button class="act quiet" id="supLater">Later</button>
+       <button class="act quiet" id="supNever">Don't ask again</button>
+     </div>`;
+  el.hidden = false;
+  // Consommé maintenant : le bandeau est à l'écran, la demande a été faite,
+  // même si l'onglet se ferme dans la seconde qui suit.
+  post('/api/support/seen', {});
+
+  const close = (outcome) => {
+    post('/api/support/answer', { outcome });
+    el.hidden = true;
+    el.innerHTML = '';
+  };
+  // Les liens partent normalement dans un nouvel onglet (pas de preventDefault) :
+  // on enregistre le geste au passage, sans se mettre en travers.
+  $('#supStar').addEventListener('click', () => close('star'));
+  $('#supKofi').addEventListener('click', () => close('donate'));
+  $('#supLater').addEventListener('click', () => close('later'));
+  $('#supNever').addEventListener('click', () => close('never'));
+}
+
 // ── Contrôles ───────────────────────────────────────────────────────────────
 function bindControls() {
   for (const seg of document.querySelectorAll('#controls .seg')) {
@@ -1343,6 +1401,7 @@ function refreshAll(resetBins) {
   refreshSpeedo();
   refreshSailHistory();
   refreshShare();
+  refreshSupport();
 }
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) refreshAll(false);
@@ -1358,7 +1417,11 @@ refreshPolar();
 refreshSpeedo();
 refreshSailHistory();
 refreshShare();
+refreshSupport();
 setInterval(refreshLive, 2000);
 setInterval(refreshStatus, 15000);
 setInterval(refreshPolar, 60000);
 setInterval(refreshSpeedo, 60000);
+// Le jalon peut tomber pendant qu'une longue nav est en cours et la page
+// ouverte. Un quart d'heure suffit largement : rien ne presse.
+setInterval(refreshSupport, 900000);
