@@ -120,6 +120,14 @@
             <button data-v="on">on</button><button data-v="off">off</button>
           </div>
         </div>
+        <!-- Où on se situe en ce moment sur la courbe. C'est le réglage qu'on
+             veut allumé en nav et éteint quand on analyse au mouillage. -->
+        <div class="group">
+          <label>Where I am now</label>
+          <div class="seg" data-key="now" title="Show the boat's current position on the polar, and how it compares">
+            <button data-v="on">on</button><button data-v="off">off</button>
+          </div>
+        </div>
       </div>
       <!-- Le filtre de voilure est ce qui donne son sens au marquage : sans
            lui on enregistre une étiquette qu'on ne peut jamais relire. -->
@@ -134,6 +142,9 @@
         <div class="tooltip" id="tip"></div>
       </div>
       <div class="legend" id="legend"></div>
+      <!-- Le repère du moment en chiffres. Le marqueur sur le diagramme dit
+           où on est ; ici on lit ce que ça vaut, et d'où sort la référence. -->
+      <div class="nowbox" id="nowBox"></div>
     </section>
 
     <!-- Sur grand écran il équilibre la colonne de gauche, sous le diagramme.
@@ -150,6 +161,15 @@
       <h2>VMG targets <span class="sub">— the angle that makes the most ground, not the most knots</span></h2>
       <div id="targets"></div>
       <div id="vmgAround"></div>
+    </section>
+
+    <!-- Sous les cibles de VMG, parce que c'est la question d'après : une
+         fois qu'on tient le bon angle, est-ce que la bonne voilure est
+         dessus ? Le confort, lui, ne se mesure pas — c'est au marin. -->
+    <section class="card" id="cardSailCompare">
+      <h2>Worth changing sail? <span class="sub">— what the other sail plans did here</span></h2>
+      <div class="chips" id="cmpWindow"></div>
+      <div id="sailCompare"><div class="empty">Loading…</div></div>
     </section>
 
     <section class="card" id="cardInspect">

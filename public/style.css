@@ -80,12 +80,13 @@ header #btnReload { margin-left: auto; }
   #cardControls { order: 1; }
   #cardDiagram  { order: 2; }
   #cardVmg      { order: 3; }
-  #cardInspect  { order: 4; }
-  #cardTable    { order: 5; }
-  #cardSail     { order: 6; }
-  #cardSpeedo   { order: 7; }
-  #cardShare    { order: 8; }
-  #cardExport   { order: 9; }
+  #cardSailCompare { order: 4; }
+  #cardInspect  { order: 5; }
+  #cardTable    { order: 6; }
+  #cardSail     { order: 7; }
+  #cardSpeedo   { order: 8; }
+  #cardShare    { order: 9; }
+  #cardExport   { order: 10; }
 }
 
 /* ── Bandeau d'état en direct ──────────────────────────────────────────── */
@@ -247,6 +248,56 @@ table.around tr.best td { color: var(--ink); background: rgba(255, 255, 255, 0.0
 table.around tr.best td.a { color: var(--good); }
 table.around tr.gain td.a { color: var(--warning); }
 @media (max-width: 900px) { .vmgcols { grid-template-columns: 1fr; } }
+
+/* ── Où on en est, là, tout de suite ────────────────────────────────────── */
+/* Une ligne qui se lit de nuit d'un coup d'œil : la vitesse, l'allure, le
+   vent, et l'écart à ce qu'on sait faire. Jamais de rouge — être sous une
+   moyenne arrive une fois sur deux, c'est la définition d'une moyenne. */
+.nowbox:empty { display: none; }
+.nowbox { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hairline); font-size: 13px; }
+.nowbox .line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.nowbox b { font-variant-numeric: tabular-nums; }
+.nowbox .k { color: var(--muted); }
+.nowpill {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  border: 1px solid var(--hairline); border-radius: 999px; padding: 2px 8px;
+}
+.nowbox .score { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600; }
+.nowbox .score.up { color: var(--good); }
+.nowbox .score.mid { color: var(--ink-2); }
+.nowbox .score.down { color: var(--warning); }
+.nowbox .hint { margin-top: 6px; }
+.nowbox .warn, .cmpnote .warn { color: var(--warning); }
+
+/* Le repère sur le diagramme : le point du moment, la trace des dernières
+   minutes (un voilier n'est jamais sur un point, il oscille autour), et le
+   trait qui le relie à la valeur de la courbe au même angle — c'est ce trait
+   qu'on regarde, pas les deux marqueurs. */
+.nowdot { fill: var(--ink); stroke: var(--page); stroke-width: 2; }
+.nowhalo { fill: rgba(255, 255, 255, 0.14); }
+.nowref { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.nowgap { stroke-width: 2; opacity: 0.9; }
+.nowtrail { fill: var(--ink-2); }
+#nowLayer.stale .nowdot { fill: var(--muted); }
+#nowLayer.stale .nowhalo { fill: rgba(255, 255, 255, 0.05); }
+
+/* ── Changer de voilure ? ───────────────────────────────────────────────── */
+/* Les lignes trop peu mesurées sont sous un séparateur, pas mélangées aux
+   autres : une seule mesure peut être la plus rapide du tableau sans rien
+   prouver, et un classement court a l'air sûr de lui. */
+table.cmp { width: 100%; font-size: 12px; }
+table.cmp td, table.cmp th { padding: 4px; text-align: right; font-variant-numeric: tabular-nums; }
+table.cmp th { color: var(--muted); font-weight: 400; font-size: 10px; text-transform: uppercase; }
+table.cmp td.a, table.cmp th.a { text-align: left; }
+table.cmp td.a { color: var(--ink); }
+table.cmp tr.cur td { background: rgba(255, 255, 255, 0.05); }
+table.cmp tr.thin td { color: var(--muted); }
+table.cmp td.d.up { color: var(--good); }
+table.cmp td.d.down { color: var(--warning); }
+table.cmp tr.sep td {
+  color: var(--muted); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.05em; padding-top: 12px; text-align: left;
+}
 
 /* ── Diagnostic du capteur de vitesse ───────────────────────────────────── */
 .verdict { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }

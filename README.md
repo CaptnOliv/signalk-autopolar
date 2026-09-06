@@ -285,6 +285,79 @@ you hold the angle. The two cases look alike on a polar diagram, so the plugin
 tabulates the neighbouring angles either side of the optimum (±5° and ±10° by
 default) with the VMG loss in knots and in percent.
 
+## Where you are right now
+
+The rest of the app looks backwards: what the boat has already done. This part
+looks at now — and it is the only part you steer by, so it fits on one line.
+
+Switch **Where I am now** on (it is on by default) and the diagram gets a
+marker at your current angle and speed, with the last few minutes trailing
+behind it: a sailing boat is never *on* a point, it swings around one, and
+seeing the cloud stops you steering to an oscillation. A dashed marker sits on
+the curve at the same angle, and the line between the two is the whole point —
+short is good, long is a question worth asking.
+
+Underneath, in words:
+
+```
+NOW  7.31 kn SOG  at 116° TWA · starboard  in 16.0 kn TWS   96% of the mean polar · −0.30 kn
+Polar here: 7.61 kn — from 14 kn (n=6) + 16 kn (n=18) · VMG 3.26 downwind
+```
+
+Three things are deliberate here.
+
+**The reference is the curve you are looking at.** Same speed (SOG / STW / STW
+corrected), same wind, same statistic. Comparing a SOG measurement against an
+STW curve would be wrong by around 10 % on a boat whose sensor over-reads, and
+nothing on screen would say so.
+
+**It is interpolated between measured wind bands, never extrapolated past
+them.** Half a knot of wind should not move the target half a knot. But where
+you have never sailed, it says **new ground** instead of stretching a
+neighbouring cell across the gap — and that is the useful answer: it tells you
+where the polar still has a hole.
+
+**There is no red.** The reference is a mean, so being under it happens half
+the time by definition; that is an average, not a fault. The percentage always
+says which statistic it is comparing against — switch **Value** to `p90` if you
+want to measure yourself against your better runs instead.
+
+The VMG target for the wind band is added when, and only when, you are within
+30° of it. On a reach you are not trying to go upwind or downwind, you are
+trying to get somewhere: showing "3 knots of VMG lost" against a dead-downwind
+optimum would be noise on a course you are holding on purpose.
+
+## Is it worth changing sail?
+
+The sail-plan filter can already draw one curve per configuration, but in
+navigation that answers the wrong question. You do not want to know what the
+polar looks like under one reef — you want to know what the *other* sail plans
+did **here**, in this wind, at this angle, and whether the difference is worth
+the manoeuvre.
+
+So the card under the VMG targets groups the measurements in the neighbourhood
+of where you are right now by sail plan, and shows the gap in knots against
+what is rigged. The window is adjustable (±10° / ±20° / ±30° of angle, ±1 /
+±2 / ±4 knots of wind): tighten it when you have plenty of data, widen it when
+the table is thin.
+
+It is an observation, not an experiment, and the table is built to say so:
+
+- **Every row carries its evidence** — how many measurements, the wind it
+  actually saw, the mean angle it actually sailed, and when it was last sailed.
+  A row measured in 17 knots does not compare with one measured in 14, and you
+  can see that without leaving the table.
+- **Anything under three measurements sits below a line**, unranked. A single
+  point can be the fastest row in the table without proving anything, and a
+  short ranking looks confident precisely because it is short.
+- **Speed only.** Whether one reef is worth taking for the comfort of the crew,
+  the state of the sea or the night ahead is a sailor's call, not a number's.
+
+Nothing is controlled here: those sail plans were not sailed at the same
+moment, nor in the same sea, and nobody can replay the day with the other sail
+up. The plugin gives you the measurements and their circumstances; the
+judgement stays yours.
+
 ## Web app
 
 `http://<server>:3000/@captnoliv/signalk-autopolar/` — SignalK mounts `public/`
@@ -310,6 +383,11 @@ metadata and serves only the API (`/api/...`).
   timestamped with its sail plan, exclusion by checkbox, or a hand-set value.
   Edits live in `overrides.json`, separate from the measurements: no correction
   ever destroys data.
+- **Where I am now** — your position on the polar, live, with the gap to the
+  curve at that angle (see above). Switch it off when you are analysing at
+  anchor, where "now" means nothing.
+- **Worth changing sail?** — what the other sail plans did in this wind at this
+  angle, with the evidence behind each row (see above).
 - **Export** — `.pol` (qtVlm, OpenCPN, Expedition), CSV with the sample count
   per cell, full JSON backup, and the raw `.jsonl`.
 
@@ -493,7 +571,10 @@ npm test
 
 `geom` (circular statistics, true wind), `gate` (the admission filter, case by
 case), `polar` (binning, statistics, smoothing, exclusions, VMG neighbourhood,
-sail filter, exports), `speedo` (synthetic worlds where the answer is known:
+sail filter, exports), `now` (the live reading interpolates between measured
+wind bands, refuses to extrapolate past them, and the sail comparison groups
+only the neighbourhood — ignoring the sail filter, which would empty the very
+question it answers), `speedo` (synthetic worlds where the answer is known:
 pure sensor error, pure current, single tack, and the check that correcting a
 lying sensor's STW recovers SOG), `sailchange` (a known step is found where it
 happened, noise alone triggers nothing, and a retro-fitted sail plan moves the

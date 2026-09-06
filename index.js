@@ -1102,6 +1102,118 @@ module.exports = function (app) {
       res.json(polarLib.cellPoints(store.runs(), polarOpts(req.query), Number(req.query.ws), Number(req.query.twa)))
     );
 
+    // Construire la polaire coûte un parcours de tous les points. La webapp
+    // demande « où en suis-je » toutes les deux secondes : sans mémo, on la
+    // reconstruirait 30 fois par minute pour un résultat identique. La clé
+    // porte à la fois les réglages et l'état du stock — un point qui tombe ou
+    // une retouche à la main doit être vu immédiatement.
+    let polarCache = { key: null, value: null };
+    const polarCached = (o) => {
+      const runs = store.runs();
+      const key = JSON.stringify([
+        o.speed, o.wind, o.tack, o.stat, o.twsBins, o.twaStep, o.minSamples, o.smooth, o.sail, o.excludeDeclared,
+        runs.length, runs.length ? runs[runs.length - 1].id : 0, store.overrides(), [...store.excluded()].length,
+      ]);
+      if (polarCache.key !== key) polarCache = { key, value: polarLib.buildPolar(runs, o) };
+      return polarCache.value;
+    };
+
+    // ── Où en est-on, là, tout de suite ──────────────────────────────────
+    // La polaire dit ce que le bateau sait faire ; en nav on veut l'autre
+    // moitié de la phrase — ce qu'il fait en ce moment, et l'écart entre les
+    // deux. Le repère est lu sur la courbe AFFICHÉE (même vitesse, même vent,
+    // même statistique) : comparer une mesure SOG à une courbe STW ferait
+    // mentir l'écart de 10 % sans que rien ne le signale.
+    router.get('/api/now', (req, res) => {
+      const v = live.values || {};
+      const f = live.fresh || {};
+      const apparent = req.query.wind === 'apparent';
+      // « auto » = l'amure sur laquelle on est vraiment. Quand le diagramme
+      // sépare les amures il montre deux courbes : le repère doit être lu sur
+      // celle qu'on barre, pas sur la moyenne des deux.
+      const wa0 = apparent ? v.awa : v.twa;
+      const q =
+        req.query.tack === 'auto'
+          ? Object.assign({}, req.query, { tack: typeof wa0 === 'number' && wrap180(wa0) < 0 ? 'port' : 'starboard' })
+          : req.query;
+      const o = polarOpts(q);
+      const ws = apparent ? v.aws : v.tws;
+      const wa = apparent ? v.awa : v.twa;
+      const speed = o.speed === 'sog' ? v.sog : o.speed === 'stwc' ? speedo.correct(o.stwCal, v.stw) : v.stw;
+      const windFresh = apparent ? !!(f.aws && f.awa) : !!(f.tws && f.twa);
+      const speedFresh = o.speed === 'sog' ? !!f.sog : !!f.stw;
+      const has = typeof ws === 'number' && typeof wa === 'number' && typeof speed === 'number';
+      const polar = has ? polarCached(o) : null;
+      const ref = polar ? polarLib.referenceAt(polar, ws, wa) : null;
+      const bin = has ? polarLib.findWindBin(polarLib.windBinEdges(o.twsBins), ws) : null;
+      const binPolar = bin && polar ? polar.bins.find((b) => b.ws === bin.ws) : null;
+      const rad = has ? (Math.abs(wrap180(wa)) * Math.PI) / 180 : 0;
+      res.json({
+        ts: live.ts,
+        reason: live.reason,
+        reasonLabel: REASONS[live.reason] || live.reason,
+        recording: ['stable', 'accumulating', 'ok'].includes(live.reason),
+        speedKey: o.speed,
+        windKey: o.wind,
+        stat: o.stat,
+        has,
+        fresh: has && windFresh && speedFresh,
+        speed,
+        ws,
+        wa: has ? wrap180(wa) : null,
+        twa: has ? Math.abs(wrap180(wa)) : null,
+        tack: has ? (wrap180(wa) < 0 ? 'port' : 'starboard') : null,
+        bin,
+        ref,
+        // L'écart, dans les deux unités qui se lisent : des nœuds (ce qu'on
+        // gagne ou perd) et un pourcentage (est-on dans les clous).
+        delta: ref ? speed - ref.value : null,
+        ratio: ref && ref.value ? speed / ref.value : null,
+        vmg: has ? speed * Math.cos(rad) : null,
+        refVmg: ref ? ref.value * Math.cos(rad) : null,
+        // La cible de VMG de la bande de vent du moment : savoir qu'on tient
+        // 94 % de la polaire ne dit pas si on la tient au bon angle.
+        targets: binPolar ? binPolar.targets : null,
+      });
+    });
+
+    // ── Est-ce que ça vaut le coup de changer de voilure ? ────────────────
+    // Le filtre de voilure trace déjà une courbe par configuration, mais en
+    // nav la question n'est pas « à quoi ressemble la polaire sous un ris » :
+    // c'est « ici, dans ce vent, à cette allure, qu'ont donné les autres ».
+    // On regroupe donc le seul voisinage du point courant, et on renvoie de
+    // quoi juger la comparaison (mesures, vent réellement rencontré, date)
+    // plutôt qu'un classement qui aurait l'air sûr parce qu'il est court.
+    router.get('/api/sail-compare', (req, res) => {
+      const o = polarOpts(req.query);
+      const v = live.values || {};
+      const apparent = o.wind === 'apparent';
+      const liveWs = apparent ? v.aws : v.tws;
+      const liveWa = apparent ? v.awa : v.twa;
+      const ws = req.query.ws != null && req.query.ws !== '' ? Number(req.query.ws) : liveWs;
+      const wa = req.query.twa != null && req.query.twa !== '' ? Number(req.query.twa) : liveWa;
+      const fromLive = !(req.query.ws != null && req.query.ws !== '');
+      if (typeof ws !== 'number' || typeof wa !== 'number' || isNaN(ws) || isNaN(wa))
+        return res.json({ rows: [], center: null, n: 0, live: fromLive, has: false });
+      const out = polarLib.sailCompare(store.runs(), o, {
+        ws,
+        twa: wa,
+        dws: req.query.dws != null ? Number(req.query.dws) : 2,
+        dtwa: req.query.dtwa != null ? Number(req.query.dtwa) : 20,
+      });
+      const ns = polarLib.normalizeSail(sail);
+      out.has = true;
+      out.live = fromLive;
+      out.speedKey = o.speed;
+      out.windKey = o.wind;
+      out.stat = o.stat;
+      // La voilure gréée en ce moment : c'est la ligne de référence, celle
+      // dont les autres sont l'écart. Sans elle, un tableau de vitesses ne
+      // répond pas à la question posée (« et si je changeais ? »).
+      out.current = `${ns.main}|${ns.head}`;
+      res.json(out);
+    });
+
     router.get('/api/runs', (req, res) => res.json(store.runs()));
 
     // Diagnostic speedo : STW contre SOG, et surtout laquelle des deux causes

@@ -23,6 +23,10 @@ const ui = {
   compare: 'none',
   cloud: 'off',
   smooth: 'on',
+  // Allumé par défaut : en nav c'est la seule chose qu'on regarde. Il s'éteint
+  // pour analyser au mouillage, où « maintenant » ne veut rien dire.
+  now: 'on',
+  cmpWindow: 'normal',
   bins: null, // null = choix automatique
   sel: null, // case inspectée { ws, twa }
   // Filtre de voilure : null = tout confondu. C'est ce qui donne son sens au
@@ -229,6 +233,8 @@ async function refreshLive() {
     refreshStatus();
   }
   state.lastAccepted = acc;
+
+  refreshNow();
 }
 
 function renderNtfy(n) {
@@ -344,7 +350,14 @@ function svgEl(tag, attrs, text) {
   return e;
 }
 
-let state = { polar: null, polar2: null, port: null, clouds: {}, vmax: 8, liveTws: null, lastAccepted: null, quality: null };
+let state = {
+  polar: null, polar2: null, port: null, clouds: {}, vmax: 8, liveTws: null, lastAccepted: null, quality: null,
+  // Le point du moment, sa trace, et la comparaison des voilures autour de lui.
+  now: null, nowTrail: [], cmp: null, cmpKey: null,
+  // Vrai si le plugin qui tourne est plus ancien que cette page (routes
+  // absentes) : on le dit une fois au lieu d'afficher des cartes vides.
+  needsRestart: false,
+};
 
 async function refreshPolar() {
   const jobs = [];
@@ -538,6 +551,12 @@ function draw() {
     drawCurves(state.polar2, RAMP2, -1, { ghost: true });
   }
 
+  // Le repère du moment vit dans sa propre couche, ajoutée en dernier pour
+  // passer au-dessus des courbes : elle se redessine toutes les deux secondes
+  // sans qu'on refasse le diagramme.
+  svg.appendChild(svgEl('g', { id: 'nowLayer' }));
+  drawNow();
+
   renderLegend(shown);
 }
 
@@ -641,6 +660,292 @@ function renderVmgAround() {
       ui.vmgBin = Number(b.dataset.ws);
       renderVmgAround();
     });
+}
+
+// ── Où on en est, là, tout de suite ─────────────────────────────────────────
+//
+// Tout le reste de la page regarde en arrière : ce que le bateau a déjà fait.
+// Cette partie-là regarde maintenant — où on se situe sur la courbe, et ce que
+// ça vaut. C'est le seul endroit de l'app qui serve à barrer, donc il tient en
+// une ligne et se lit de nuit.
+//
+// Le repère vit dans sa propre couche SVG : il se redessine toutes les deux
+// secondes sans qu'on refasse les courbes, et s'efface d'un seul geste.
+const SPEED_LABEL = { sog: 'SOG', stw: 'STW', stwc: 'STW corr.' };
+const STAT_LABEL = { mean: 'mean', median: 'median', p90: 'p90', max: 'best-ever' };
+const TRAIL_MAX = 90; // ~3 min à un relevé toutes les 2 s
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+async function refreshNow() {
+  if (ui.now !== 'on') {
+    state.now = null;
+    state.nowTrail = [];
+    drawNow();
+    renderNow();
+    return;
+  }
+  try {
+    // En amures séparées, le repère se lit sur la courbe de l'amure qu'on
+    // barre : le serveur la résout lui-même, il est le seul à savoir laquelle
+    // au moment où il répond.
+    const r = await fetch(`${API}/api/now?${query(ui.tack === 'split' ? { tack: 'auto' } : {})}`);
+    // Webapp plus récente que le plugin qui tourne : la route n'existe pas
+    // encore. On le dit une fois, plutôt que de laisser une carte vide qui
+    // ressemble à une panne de données.
+    if (r.status === 404) {
+      state.needsRestart = true;
+      state.now = null;
+    } else {
+      const n = await r.json();
+      state.now = n;
+      const last = state.nowTrail[state.nowTrail.length - 1];
+      if (n && n.has && n.fresh && (!last || last.ts !== n.ts)) {
+        state.nowTrail.push({ ts: n.ts, twa: n.twa, wa: n.wa, speed: n.speed });
+        if (state.nowTrail.length > TRAIL_MAX) state.nowTrail.shift();
+      }
+    }
+  } catch (e) {
+    state.now = null;
+  }
+  drawNow();
+  renderNow();
+  // La comparaison des voilures est ancrée sur le point courant. Elle ne se
+  // refait que quand on change vraiment de coin de polaire — un tableau qui
+  // bouge toutes les deux secondes ne se lit pas.
+  const n = state.now;
+  const key = n && n.has ? `${n.bin ? n.bin.ws : '?'}|${Math.round(n.twa / 10)}` : null;
+  if (key && key !== state.cmpKey) {
+    state.cmpKey = key;
+    refreshSailCompare();
+  }
+}
+
+function drawNow() {
+  const layer = document.getElementById('nowLayer');
+  if (!layer) return;
+  // Pas d'innerHTML sur un nœud SVG : le support est inégal selon les
+  // navigateurs, et cette page s'ouvre depuis trois iPhone du bord.
+  while (layer.firstChild) layer.removeChild(layer.firstChild);
+  const n = state.now;
+  if (ui.now !== 'on' || !n || !n.has || !state.polar) return;
+  layer.setAttribute('class', n.fresh ? '' : 'stale');
+  const vmax = state.vmax || 8;
+  // Une surfe au-delà de l'échelle ne doit pas envoyer le marqueur hors du
+  // cadre : on le colle au bord, le chiffre exact est écrit juste dessous.
+  const rOf = (v) => Math.min((v / vmax) * R, R * 1.05);
+  const sideOf = (wa) => (ui.tack === 'split' ? (wa < 0 ? -1 : 1) : 1);
+  const side = sideOf(n.wa);
+
+  // La trace des dernières minutes. Un voilier n'est jamais SUR un point, il
+  // tourne autour : voir le nuage évite de barrer sur une oscillation.
+  const lastTs = state.nowTrail.length ? state.nowTrail[state.nowTrail.length - 1].ts : 0;
+  for (const t of state.nowTrail) {
+    const [x, y] = pos(t.twa, rOf(t.speed), sideOf(t.wa));
+    layer.appendChild(
+      svgEl('circle', {
+        cx: x.toFixed(1),
+        cy: y.toFixed(1),
+        r: 2,
+        class: 'nowtrail',
+        opacity: Math.max(0.07, 0.45 - (lastTs - t.ts) / 400000).toFixed(2),
+      })
+    );
+  }
+
+  const [bx, by] = pos(n.twa, rOf(n.speed), side);
+  // Le trait entre la courbe et nous : c'est lui l'information, les deux
+  // marqueurs ne sont que ses extrémités.
+  if (n.ref) {
+    const [rx, ry] = pos(n.twa, rOf(n.ref.value), side);
+    layer.appendChild(
+      svgEl('line', { x1: rx, y1: ry, x2: bx, y2: by, class: 'nowgap', stroke: cssVar(n.speed >= n.ref.value ? '--good' : '--warning') })
+    );
+    layer.appendChild(svgEl('circle', { cx: rx, cy: ry, r: 5, class: 'nowref' }));
+  }
+  layer.appendChild(svgEl('circle', { cx: bx, cy: by, r: 10, class: 'nowhalo' }));
+  layer.appendChild(svgEl('circle', { cx: bx, cy: by, r: 4.5, class: 'nowdot' }));
+}
+
+// Ce qui n'est pas dans le chiffre : donnée périmée, moteur en route, fenêtre
+// rejetée. Sans ça, « 94 % » se lit comme un verdict alors que c'est parfois
+// la dernière valeur d'une source morte.
+function nowNotes(n) {
+  const out = [];
+  if (!n.fresh) out.push('stale data — this is the last thing that came in');
+  if (!n.recording) out.push(n.reasonLabel);
+  return out.length ? ` · <span class="warn">${out.join(' · ')}</span>` : '';
+}
+
+// Tenir 100 % de la polaire ne dit pas qu'on la tient au bon angle : au près
+// et au portant, c'est le VMG qui fait avancer, pas les nœuds.
+function nowVmg(n) {
+  if (!n.targets || n.vmg == null) return '';
+  const up = n.twa <= 90;
+  const t = up ? n.targets.upwind : n.targets.downwind;
+  if (!t) return '';
+  const mine = Math.abs(n.vmg);
+  const d = mine - t.vmg;
+  const vmg = ` · VMG <b>${fmt(mine, 2)}</b> ${up ? 'upwind' : 'downwind'}`;
+  // Au largue on ne cherche pas à gagner au vent : on va quelque part. La
+  // cible de VMG ne se compare que si on est déjà dans son voisinage,
+  // sinon elle affiche une perte sur une route qu'on tient exprès.
+  if (Math.abs(n.twa - t.twa) > 30) return vmg;
+  return `${vmg} — best in this band ${fmt(t.twa, 0)}° → ${fmt(t.vmg, 2)} (${d >= 0 ? '+' : ''}${fmt(d, 2)})`;
+}
+
+function renderNow() {
+  const el = $('#nowBox');
+  if (!el) return;
+  if (ui.now !== 'on') return void (el.innerHTML = '');
+  if (state.needsRestart)
+    return void (el.innerHTML = '<div class="hint">Restart the plugin to enable this — this web app is newer than the version running.</div>');
+  const n = state.now;
+  if (!n || !n.has) return void (el.innerHTML = '<div class="hint">Waiting for wind and boat speed…</div>');
+
+  const waName = n.windKey === 'apparent' ? 'AWA' : 'TWA';
+  const wsName = n.windKey === 'apparent' ? 'AWS' : 'TWS';
+  const head = `<span class="nowpill">now</span>
+    <span><b>${fmt(n.speed, 2)}</b> <span class="k">kn ${SPEED_LABEL[n.speedKey] || n.speedKey}</span></span>
+    <span class="k">at</span> <span><b>${fmt(n.twa, 0)}°</b> <span class="k">${waName} · ${n.tack}</span></span>
+    <span class="k">in</span> <span><b>${fmt(n.ws, 1)}</b> <span class="k">kn ${wsName}</span></span>`;
+
+  // Pas de repère ici : c'est une information, pas un manque. C'est même la
+  // plus utile de toutes — elle dit où il reste à naviguer.
+  if (!n.ref || n.ratio == null) {
+    el.innerHTML = `<div class="line">${head}<span class="score mid">new ground</span></div>
+      <div class="hint">Nothing measured at this angle in this wind yet, so there is nothing to compare with — this is exactly where the polar still has a hole.${nowNotes(
+        n
+      )}</div>`;
+    return;
+  }
+  const pct = n.ratio * 100;
+  // Jamais de rouge : la référence est une moyenne, être dessous arrive une
+  // fois sur deux. C'est un écart qu'on montre, pas une faute.
+  const cls = pct >= 100 ? 'up' : pct >= 93 ? 'mid' : 'down';
+  const from = n.ref.from.map((f) => `${f.ws} kn (n=${f.n})`).join(' + ');
+  el.innerHTML = `<div class="line">${head}
+      <span class="score ${cls}">${fmt(pct, 0)}% <span class="k">of the ${STAT_LABEL[n.stat] || n.stat} polar</span> · ${
+    n.delta >= 0 ? '+' : ''
+  }${fmt(n.delta, 2)} kn</span></div>
+    <div class="hint">Polar here: <b>${fmt(n.ref.value, 2)} kn</b> — from ${from}${
+    n.ref.weak ? ' · thin, take it loosely' : ''
+  }${nowVmg(n)}${nowNotes(n)}</div>`;
+}
+
+// ── Est-ce que ça vaut le coup de changer de voilure ? ──────────────────────
+//
+// Ce que ce tableau NE dit pas compte autant que ce qu'il dit : les voilures
+// n'ont pas été navigées au même moment ni dans la même mer, et personne ne
+// peut rejouer la journée avec l'autre voile. D'où le nombre de mesures, le
+// vent réellement rencontré et la date de la dernière sur chaque ligne — et
+// un trait sous lequel passe tout ce qui repose sur moins de trois mesures.
+// Une seule mesure peut être la plus rapide du tableau sans rien prouver.
+const CMP_WINDOWS = {
+  tight: { label: '±10° · ±1 kn', dws: 1, dtwa: 10 },
+  normal: { label: '±20° · ±2 kn', dws: 2, dtwa: 20 },
+  wide: { label: '±30° · ±4 kn', dws: 4, dtwa: 30 },
+};
+
+// Les points collectés avant qu'on pense à saisir la voilure existent, et ils
+// comptent. Les appeler « — » en tête de ligne ne se lit pas ; les cacher
+// serait pire, ce sont des mesures comme les autres.
+const planLabel = (sail) => {
+  const l = sailLabel(sail);
+  return l === '—' ? 'not recorded' : l;
+};
+
+const ago = (ts) => {
+  if (!ts) return '—';
+  const h = (Date.now() - ts) / 3600000;
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))} min ago`;
+  if (h < 48) return `${Math.round(h)} h ago`;
+  return `${Math.round(h / 24)} d ago`;
+};
+
+async function refreshSailCompare() {
+  const el = $('#sailCompare');
+  if (!el) return;
+  const w = CMP_WINDOWS[ui.cmpWindow] || CMP_WINDOWS.normal;
+  try {
+    const r = await fetch(`${API}/api/sail-compare?${query({ dws: w.dws, dtwa: w.dtwa })}`);
+    if (r.status === 404) {
+      state.needsRestart = true;
+      state.cmp = null;
+    } else state.cmp = await r.json();
+  } catch (e) {
+    state.cmp = null;
+  }
+  renderSailCompare();
+}
+
+function renderCmpChips() {
+  const el = $('#cmpWindow');
+  if (!el) return;
+  el.innerHTML =
+    '<span class="chiplabel">window</span>' +
+    Object.entries(CMP_WINDOWS)
+      .map(([k, w]) => `<button class="chip" data-w="${k}" aria-pressed="${k === ui.cmpWindow}">${w.label}</button>`)
+      .join('');
+  for (const b of el.querySelectorAll('.chip'))
+    b.addEventListener('click', () => {
+      ui.cmpWindow = b.dataset.w;
+      refreshSailCompare();
+    });
+}
+
+function renderSailCompare() {
+  const el = $('#sailCompare');
+  if (!el) return;
+  renderCmpChips();
+  if (state.needsRestart)
+    return void (el.innerHTML = '<div class="hint">Restart the plugin to enable this — this web app is newer than the version running.</div>');
+  const c = state.cmp;
+  if (!c || !c.has) return void (el.innerHTML = '<div class="empty">Waiting for wind and boat speed…</div>');
+
+  const waName = c.windKey === 'apparent' ? 'AWA' : 'TWA';
+  const where = `<b>${fmt(c.center.twa, 0)}°</b> ${waName} ±${c.center.dtwa}° in <b>${fmt(c.center.ws, 1)} kn</b> ±${c.center.dws}`;
+  if (!c.rows.length)
+    return void (el.innerHTML = `<div class="empty">Nothing sailed around ${fmt(c.center.twa, 0)}° in ${fmt(
+      c.center.ws,
+      1
+    )} kn yet.</div><div class="hint cmpnote">Widen the window, or keep her here and the table fills in.</div>`);
+
+  const solid = c.rows.filter((r) => r.n >= 3);
+  const thin = c.rows.filter((r) => r.n < 3);
+  // La référence est la voilure gréée en ce moment ; à défaut (on n'a jamais
+  // navigué ici avec elle), la meilleure ligne étayée. On dit toujours
+  // laquelle : un écart sans son point de départ ne veut rien dire.
+  const base = c.rows.find((r) => r.key === c.current && r.n >= 3) || solid[0] || c.rows[0];
+  const isRigged = base && base.key === c.current;
+
+  const row = (r) => {
+    const d = base && r.key !== base.key ? r.value - base.value : null;
+    const cls = [r.key === c.current ? 'cur' : '', r.n < 3 ? 'thin' : ''].filter(Boolean).join(' ');
+    return `<tr class="${cls}">
+      <td class="a">${planLabel(r.sail)}${r.key === c.current ? ' <span class="k">· rigged now</span>' : ''}</td>
+      <td>${r.n}</td>
+      <td><b>${fmt(r.value, 2)}</b></td>
+      <td>${fmt(Math.abs(r.vmg), 2)}</td>
+      <td class="d ${d == null ? '' : d >= 0 ? 'up' : 'down'}">${d == null ? '—' : `${d >= 0 ? '+' : ''}${fmt(d, 2)}`}</td>
+      <td class="k">${fmt(r.twsMean, 1)} kn · ${fmt(r.twaMean, 0)}°</td>
+      <td class="k">${ago(r.lastTs)}</td></tr>`;
+  };
+  const sep = thin.length
+    ? '<tr class="sep"><td colspan="7">below — fewer than 3 measurements, not enough to rank</td></tr>'
+    : '';
+
+  el.innerHTML = `<table class="cmp"><thead><tr>
+      <th class="a">sail plan</th><th>pts</th><th>${SPEED_LABEL[c.speedKey] || c.speedKey}</th><th>VMG</th>
+      <th>vs ${isRigged ? 'rigged' : 'best'}</th><th>wind · angle</th><th>last</th>
+    </tr></thead><tbody>${solid.map(row).join('')}${sep}${thin.map(row).join('')}</tbody></table>
+    <div class="hint cmpnote">Around ${where} — ${c.n} point${c.n > 1 ? 's' : ''}, ${c.rows.length} sail plan${
+    c.rows.length > 1 ? 's' : ''
+  }, compared with <b>${planLabel(base.sail)}</b>${isRigged ? '' : ' (nothing measured here with what is rigged now)'}.
+    ${
+      c.rows.length > 1
+        ? 'These sail plans were not sailed at the same moment nor in the same sea — this compares observations, not a test. Check the wind each row actually saw before trusting the gap.'
+        : 'Only one sail plan has ever been sailed here, so there is nothing to compare it with yet.'
+    } Speed only: comfort and safety are yours to judge.</div>`;
 }
 
 // ── Table ───────────────────────────────────────────────────────────────────
@@ -1264,8 +1569,14 @@ function bindControls() {
       const b = e.target.closest('button');
       if (!b) return;
       ui[key] = b.dataset.v;
+      // La trace porte une vitesse et un angle lus dans une projection
+      // donnée : la garder après un changement mélangerait des SOG et des STW
+      // sur le même nuage.
+      state.nowTrail = [];
       syncControls();
       refreshPolar();
+      refreshNow();
+      refreshSailCompare();
     });
   }
   syncControls();
@@ -1402,6 +1713,7 @@ function refreshAll(resetBins) {
   refreshSailHistory();
   refreshShare();
   refreshSupport();
+  refreshSailCompare();
 }
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) refreshAll(false);
@@ -1418,10 +1730,15 @@ refreshSpeedo();
 refreshSailHistory();
 refreshShare();
 refreshSupport();
+refreshSailCompare();
 setInterval(refreshLive, 2000);
 setInterval(refreshStatus, 15000);
 setInterval(refreshPolar, 60000);
 setInterval(refreshSpeedo, 60000);
+// La comparaison des voilures se rafraîchit d'elle-même quand on change de
+// coin de polaire ; ce battement ne sert qu'au cas où on y reste (des points
+// tombent, le tableau doit en tenir compte) et quand le repère est éteint.
+setInterval(refreshSailCompare, 120000);
 // Le jalon peut tomber pendant qu'une longue nav est en cours et la page
 // ouverte. Un quart d'heure suffit largement : rien ne presse.
 setInterval(refreshSupport, 900000);
