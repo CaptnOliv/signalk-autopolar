@@ -285,6 +285,8 @@ you hold the angle. The two cases look alike on a polar diagram, so the plugin
 tabulates the neighbouring angles either side of the optimum (±5° and ±10° by
 default) with the VMG loss in knots and in percent.
 
+![VMG](docs/vmg.png)
+
 ## Where you are right now
 
 The rest of the app looks backwards: what the boat has already done. This part
