@@ -83,15 +83,15 @@ Two standard SignalK paths, either of which is enough:
 | path | what it is |
 |---|---|
 | `propulsion.<engine>.state` | `started` / `stopped` |
-| `propulsion.<engine>.revolutions` | engine speed, in hertz |
+| `propulsion.<engine>.revolutions` | any non-zero value means the engine is turning |
 
 **`state` is preferred**, for a simple reason: it answers the question
-directly, and it cannot be wrong by a factor. `revolutions` is defined in
-hertz, but plenty of gateways publish RPM into that path instead, which is
-sixty times too high — and an engine "idling" at a phantom 30 RPM would quietly
-block collection forever. When both paths are present and they disagree, the
-plugin assumes the engine is *running*. Losing one point costs one point;
-letting a motoring point into the polar costs the polar.
+directly and cannot be ambiguous. `revolutions` is only ever read as a
+yes/no — anything other than zero means the engine is running — so it makes
+no difference what unit the gateway sends it in or how it is scaled. When both
+paths are present and they disagree, the plugin assumes the engine is
+*running*. Losing one point costs one point; letting a motoring point into the
+polar costs the polar.
 
 If you have several engines, any one of them running is enough to stop
 collection.

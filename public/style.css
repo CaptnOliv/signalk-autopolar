@@ -50,12 +50,15 @@ h1 { font-size: 17px; margin: 0; font-weight: 600; }
 h2 { font-size: 13px; margin: 0 0 10px; font-weight: 600; color: var(--ink-2); letter-spacing: 0.02em; }
 h2 .sub { color: var(--muted); font-weight: 400; }
 
+/* Titre et bouton « refresh » sur une ligne, le sous-titre (nombre de points,
+   version) en dessous : sur un téléphone, le sous-titre seul prend la largeur
+   de deux lignes et repoussait le bouton. */
 header {
-  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
   padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--hairline);
 }
-header .sub { color: var(--muted); font-size: 12px; }
-header #btnReload { margin-left: auto; }
+header .titlerow { display: flex; align-items: baseline; gap: 12px; }
+header .sub { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+header #btnReload { margin-left: auto; flex: none; }
 
 .card {
   background: var(--surface);
@@ -90,13 +93,21 @@ header #btnReload { margin-left: auto; }
 }
 
 /* ── Bandeau d'état en direct ──────────────────────────────────────────── */
-.livehead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.livehead { display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap; margin-bottom: 12px; }
+/* Les deux pastilles — collecte et santé des entrées — restent sur la même
+   ligne quel que soit leur contenu : c'est ce qu'on lit en premier en nav. La
+   barre de progression passe dessous si la place manque, jamais elles. Un
+   libellé d'entrées trop long est tronqué, pas renvoyé à la ligne. */
+.pills { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }
+.pills #state { flex: none; }
+.pills #inputs { flex: 0 1 auto; min-width: 0; }
+.pills #inputs > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .state {
   display: inline-flex; align-items: center; gap: 8px;
   font-size: 15px; font-weight: 600; padding: 6px 12px; border-radius: 999px;
   border: 1px solid var(--hairline); background: var(--surface-2);
 }
-.state .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.state .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
 .state.rec { color: var(--good); border-color: rgba(12, 163, 12, 0.45); }
 .state.rec .dot { background: var(--good); animation: pulse 1.6s infinite; }
 .state.wait { color: var(--warning); border-color: rgba(250, 178, 25, 0.35); }

@@ -104,7 +104,7 @@ async function refreshLive() {
   const inputs = $('#inputs');
   inputs.className = 'state ' + (allOk ? 'ok' : ok ? 'wait' : 'bad');
   inputs.innerHTML = `<span class="dot"></span><span>${
-    allOk ? `${ok} of ${keys.length} inputs up to date` : `${ok}/${keys.length} inputs up to date — ${keys.filter((k) => !f[k]).join(', ')}`
+    allOk ? `${ok}/${keys.length} inputs up to date` : `${ok}/${keys.length} up to date — stale: ${keys.filter((k) => !f[k]).join(', ')}`
   }</span>`;
 
   renderDeclare(live.engine);
@@ -191,15 +191,8 @@ async function refreshLive() {
     );
   if (v.twSource && v.twSource !== 'signalk') parts.push(`true wind ${v.twSource} (the server does not publish it)`);
   if (v.navState) parts.push(`navigation.state: ${v.navState}`);
-  // Le témoin moteur : la plus forte valeur brute jamais vue. Il ne sert que
-  // si la conversion est douteuse, donc on ne l'affiche qu'à ce moment-là.
   const eng = live.engine;
   if (eng && eng.source === 'autostate') parts.push('engine state inferred from navigation.state — no engine data on the bus');
-  if (eng && eng.witness)
-    parts.push(
-      `engine peak seen: raw ${fmt(eng.witness.raw, 2)} → ${fmt(eng.witness.raw * eng.factor, 0)} rpm ` +
-        `(${eng.witness.source || 'unknown source'}, ×${eng.factor})`
-    );
   if (live.counters && live.counters.errors) parts.push(`⚠ ${live.counters.errors} error(s): ${live.counters.lastError}`);
   if (live.counters && live.counters.rejected) {
     const top = Object.entries(live.counters.rejected).sort((a, b) => b[1] - a[1]).slice(0, 3);

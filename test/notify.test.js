@@ -15,7 +15,17 @@ Date.now = () => now;
 const sent = [];
 let failNext = 0;
 const realFetch = global.fetch;
+// Le `fetch` réel refuse un caractère > 255 dans un en-tête (ByteString) : le
+// stub doit faire pareil, sinon un tiret cadratin dans un titre passerait le
+// test et exploserait en production, file gelée à la clé.
+function assertHeadersAscii(headers) {
+  for (const v of Object.values(headers || {})) {
+    const i = String(v).search(/[^\x00-\xff]/);
+    if (i >= 0) throw new TypeError(`Cannot convert argument to a ByteString because the character at index ${i} has a value that is greater than 255`);
+  }
+}
 global.fetch = async (url, init) => {
+  assertHeadersAscii(init.headers);
   if (failNext > 0) {
     failNext--;
     throw new Error('ENETUNREACH');
@@ -141,6 +151,26 @@ function startPlugin(options) {
   await ticks(t4, 5, () => ({ sog: 0.1, awa: 40, hdg: 100 })); // mouillage
   assert.strictEqual(sent.length, 1, 'la file se vide même au mouillage');
   p4.stop();
+
+  // ── Un titre non-ASCII ne gèle pas la file ────────────────────────────────
+  // Les en-têtes HTTP sont des ByteString. Un tiret cadratin, un accent ou un
+  // emoji dans le titre faisait lever `fetch` (« Cannot convert argument to a
+  // ByteString »), l'envoi échouait en boucle et la file ne partait jamais —
+  // exactement le « 9 notifications waiting » observé au retour. On encode le
+  // titre en RFC 2047, que ntfy sait relire ; le corps part en UTF-8 tel quel.
+  const { createNotifier } = require('../lib/notify');
+  const heads = [];
+  global.fetch = async (url, init) => {
+    assertHeadersAscii(init.headers);
+    heads.push(init.headers);
+    return { ok: true, status: 200 };
+  };
+  const n = createNotifier({ ntfyUrl: 'https://ntfy.test/jazzy' });
+  n.enqueue({ title: 'Autopolar — rien ne rentre, ça coince ?', body: 'accents dans le corps : OK é à ç', tags: 'warning' });
+  await breathe();
+  assert.strictEqual(n.pending(), 0, 'la file est partie malgré les accents dans le titre');
+  assert.match(heads[0].Title, /^=\?UTF-8\?B\?/, 'titre encodé en RFC 2047');
+  assert.strictEqual(Buffer.from(heads[0].Title.slice(10, -2), 'base64').toString('utf8'), 'Autopolar — rien ne rentre, ça coince ?');
 
   Date.now = realNow;
   global.fetch = realFetch;

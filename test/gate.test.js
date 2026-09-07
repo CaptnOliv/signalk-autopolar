@@ -2,7 +2,6 @@ const assert = require('assert');
 const { classify, assessWindow, condense } = require('../lib/gate');
 
 const OPTS = {
-  engineOffRpm: 50,
   autostateFallback: true,
   minSogKn: 1,
   minAwsKn: 1.5,
@@ -31,12 +30,14 @@ assert.strictEqual(classify(s(), OPTS).engineSource, 'state+rpm', 'les deux tém
 assert.strictEqual(classify(s({ rpm: 1200 }), OPTS).reason, 'motoring');
 assert.strictEqual(classify(s({ engineState: 'started' }), OPTS).reason, 'motoring');
 
-// ── Quand les deux témoins se contredisent ────────────────────────────────
-// On ne cherche pas le régime, seulement « tourne / ne tourne pas ». Un
-// `revolutions` mal mis à l'échelle par une passerelle (la spec dit des hertz,
-// rien ne l'impose) peut faire passer un moteur à l'arrêt pour un ralenti — et
-// inversement. Dans le doute on prend la lecture prudente : collecter un point
-// au moteur salit la polaire pour toujours, en rater un ne coûte que ce point.
+// ── `revolutions` lu comme un simple booléen ──────────────────────────────
+// On ne cherche pas le régime, seulement « tourne / ne tourne pas » : toute
+// valeur non nulle = en marche, quelle que soit l'unité de la passerelle
+// (hertz, tr/min, pulses). Une valeur minuscule suffit donc.
+assert.strictEqual(classify(s({ rpm: 0.5, engineState: 'stopped' }), OPTS).reason, 'motoring');
+// Et quand les deux témoins se contredisent, on prend la lecture prudente :
+// collecter un point au moteur salit la polaire pour toujours, en rater un ne
+// coûte que ce point.
 assert.strictEqual(classify(s({ rpm: 900, engineState: 'stopped' }), OPTS).reason, 'motoring');
 assert.strictEqual(classify(s({ rpm: 0, engineState: 'started' }), OPTS).reason, 'motoring');
 

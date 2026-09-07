@@ -30,9 +30,11 @@
 </div>
 
 <header>
-  <h1>Autopolar</h1>
+  <div class="titlerow">
+    <h1>Autopolar</h1>
+    <button class="act" id="btnReload" title="Reload everything and re-centre the wind bands on the wind right now">refresh</button>
+  </div>
   <span class="sub" id="headSub">automatic learning</span>
-  <button class="act" id="btnReload" title="Reload everything and re-centre the wind bands on the wind right now">refresh</button>
 </header>
 
 <!-- Un coup de pouce. Jamais un modal, jamais au chargement : le bandeau
@@ -52,8 +54,10 @@
      pourquoi ». -->
 <section class="card">
   <div class="livehead">
-    <span class="state off" id="state"><span class="dot"></span><span id="stateLabel">…</span></span>
-    <span class="state" id="inputs"><span class="dot"></span><span>…</span></span>
+    <div class="pills">
+      <span class="state off" id="state"><span class="dot"></span><span id="stateLabel">…</span></span>
+      <span class="state" id="inputs"><span class="dot"></span><span>…</span></span>
+    </div>
     <div class="progress" title="Progress of the current steady state"><i id="progress" style="width:0"></i></div>
     <span class="msg" id="progressLabel"></span>
   </div>

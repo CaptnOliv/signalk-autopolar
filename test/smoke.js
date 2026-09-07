@@ -30,7 +30,7 @@ const fakeApp = {
   },
   getSelfPath: (p) => {
     if (p === 'propulsion') {
-      return { Engine1: { revolutions: node(world.rpm / 60), state: node(world.rpm > 50 ? 'started' : 'stopped') } };
+      return { Engine1: { revolutions: node(world.rpm / 60), state: node(world.rpm > 0 ? 'started' : 'stopped') } };
     }
     const map = {
       'navigation.speedOverGround': world.sog * KN,
@@ -237,26 +237,29 @@ assert.doesNotThrow(() => tick2(), 'un arbre cassé ne fait pas remonter d\'exce
 assert.ok(logged > 0, "l'erreur est signalée et non avalée en silence");
 p2.stop();
 
-// ── Conversion du compte-tours ────────────────────────────────────────────
-// La spec SignalK met `revolutions` en hertz, d'où le facteur 60 par défaut.
-// Mais une passerelle qui publie autre chose donne un affichage faux sans que
-// rien ne proteste : on vérifie donc que la valeur BRUTE est exposée telle
-// quelle (c'est elle qui permet de diagnostiquer), que le facteur est
-// réellement appliqué, et que la plus forte valeur vue est retenue même si
-// personne ne regardait l'écran à ce moment-là.
+// ── `revolutions` : un booléen, pas un régime ─────────────────────────────
+// On ne convertit rien et on n'affiche aucun chiffre : toute valeur non nulle,
+// quelle que soit son unité (hertz, tr/min, pulses), veut dire « le moteur
+// tourne ». Le verdict rendu à la webapp est donc « running », et rien n'est
+// collecté tant qu'il tourne.
 {
-  const engineApp = Object.assign({}, fakeApp, {
-    getSelfPath: (path) =>
-      path === 'propulsion' ? { Engine1: { revolutions: node(30), state: node('started') } } : fakeApp.getSelfPath(path),
-  });
-  const live = (options) => {
-    const pl = require('../index.js')(engineApp);
+  // Un régime de nav valide, pour que le filtre aille jusqu'au verdict moteur
+  // au lieu de s'arrêter avant sur un manque de vent.
+  world = { sog: 6, stw: 5.8, aws: 14, awa: 42, tws: 11, twa: 48, hdg: 100, rot: 0, roll: 12, navState: 'sailing' };
+  const engineLive = (revValue) => {
+    const app = Object.assign({}, fakeApp, {
+      getSelfPath: (path) =>
+        path === 'propulsion'
+          ? { Engine1: { revolutions: node(revValue) } } // pas de `state` : seul `revolutions` tranche
+          : fakeApp.getSelfPath(path),
+    });
+    const pl = require('../index.js')(app);
     let t = null;
     global.setInterval = (fn) => {
       t = fn;
       return 0;
     };
-    pl.start(Object.assign({}, IDENT, options));
+    pl.start(Object.assign({}, IDENT));
     global.setInterval = realSetInterval;
     let handler = null;
     pl.registerWithRouter({
@@ -272,15 +275,15 @@ p2.stop();
     return payload;
   };
 
-  const std = live({});
-  assert.strictEqual(std.values.rpmRaw, 30, 'la valeur brute est exposée sans retouche');
-  assert.strictEqual(std.values.rpm, 1800, '30 Hz font 1800 tr/min');
-  assert.ok(std.engine.witness && std.engine.witness.raw === 30, 'la plus forte valeur brute est retenue');
-  assert.strictEqual(std.engine.factor, 60);
-
-  const raw = live({ engineRpmFactor: 1 });
-  assert.strictEqual(raw.values.rpm, 30, 'le facteur est réellement appliqué');
-  assert.strictEqual(raw.values.rpmRaw, 30, 'et il ne touche pas au brut');
+  // 30 Hz, 1800 « tr/min », 0,5 pulse : peu importe l'échelle, c'est « running ».
+  for (const v of [30, 1800, 0.5]) {
+    assert.strictEqual(engineLive(v).engine.state, 'running', `revolutions=${v} ⇒ moteur en marche`);
+  }
+  // Zéro (ou pas de donnée) : le moteur est à l'arrêt, la collecte peut se faire.
+  assert.strictEqual(engineLive(0).engine.state, 'off', 'revolutions=0 ⇒ moteur à l\'arrêt');
+  // Aucun chiffre moteur ne fuit vers la webapp : seul le verdict est exposé.
+  const p = engineLive(30);
+  assert.ok(!('rpm' in p.values) && !('rpm' in p.engine), 'aucune valeur de régime dans le payload');
 }
 
 // ── Sans identité du bateau, rien n'est collecté ──────────────────────────
