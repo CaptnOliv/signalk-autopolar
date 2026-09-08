@@ -1,13 +1,13 @@
 {
   "name": "@captnoliv/signalk-autopolar",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "publishConfig": {
     "access": "public"
   },
   "description": "Learns your boat's polar by watching how she is actually sailed — never under engine, never at anchor. Web app, SOG/STW and true/apparent comparison, speed-sensor diagnostic, .pol export.",
   "main": "index.js",
   "scripts": {
-    "test": "node test/geom.test.js && node test/gate.test.js && node test/polar.test.js && node test/now.test.js && node test/speedo.test.js && node test/sailchange.test.js && node test/notify.test.js && node test/share.test.js && node test/support.test.js && node test/smoke.js"
+    "test": "node test/geom.test.js && node test/gate.test.js && node test/polar.test.js && node test/now.test.js && node test/speedo.test.js && node test/sailchange.test.js && node test/notify.test.js && node test/share.test.js && node test/usage.test.js && node test/support.test.js && node test/smoke.js"
   },
   "keywords": [
     "signalk-node-server-plugin",

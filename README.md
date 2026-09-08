@@ -503,6 +503,47 @@ can check a declaration. The web app shows the whole payload at any time
 (**See exactly what is sent**), which is the point: a contribution you cannot
 read is one you end up switching off.
 
+## Letting me know this install exists
+
+There is no honest way to find out whether anyone is running a SignalK plugin.
+npm download counts are mostly mirrors and security scanners — this package got
+191 "downloads" on its publication day and none since — and a boat that
+installed once and then sails for three years without updating never appears
+again. The collector only ever sees the boats that share a polar.
+
+So, once a day, the plugin says that it exists. It sends this and nothing else:
+
+| field | why |
+|---|---|
+| a random ID | drawn once on this install, tied to nothing — not your boat name, not your hardware, not your network. Without it the count would be based on IP addresses, which over CGNAT satellite links means nothing at all |
+| plugin version | so I know which versions are actually out there before breaking anything |
+| Node and SignalK versions | same reason |
+| the date the ID was drawn | to tell a new install from an old one |
+| whether sharing is on | the only way to know how many people keep the plugin but decline the pool |
+
+No position. No boat name. No polar. **No IP address is kept by the server.**
+The exact payload is readable at any time in the web app, under Share → *See
+exactly what that ping contains*, and served raw at `/api/usage.json`.
+
+Nothing goes out in the first hour of running: an install that gets tried for
+five minutes and removed is not an install, and a `npm test` is not one either.
+A failed ping is simply lost — there is no retry queue, deliberately. A
+statistic has no business being handled more carefully than the things that
+actually serve the crew.
+
+Switch it off with **Let me know this install exists** in the plugin
+configuration. The plugin then works exactly as before.
+
+One thing this ID also does: it travels with a shared polar as its key. The
+boat name alone could not do that job — two Oceanis 48 whose owners both typed
+"Jazzy" used to overwrite each other's polar in the pool, in silence, and
+renaming your boat left an orphan copy behind instead of replacing your own.
+Turning the ping off stops the daily ping, not that key.
+
+I would rather ask for this in plain sight and have some of you say no, than
+hide it behind a "connectivity check" and have you find it in the source. It is
+MIT-licensed JavaScript on a server you own; you would find it.
+
 ## Idle alert (ntfy)
 
 The real risk with this plugin is not that it crashes — it is that it runs
@@ -536,6 +577,7 @@ In the plugin data directory (`~/.signalk/plugin-config-data/signalk-autopolar/`
 | `sail.json` | the current sail plan |
 | `declare.json` | the running "I am sailing" declaration, if any |
 | `share.json` | what has already been sent to the pool, and when |
+| `usage.json` | the random install ID, and when the daily ping last went out |
 
 All plain text, inspectable and repairable by hand from a cockpit with no
 network. A line truncated by a power cut is skipped and the rest of the history
@@ -563,7 +605,10 @@ stay off if another polar plugin is installed: they would all write to the same
 `performance.*` paths.
 
 `supportPrompt` controls the one banner described in [Supporting the
-plugin](#supporting-the-plugin). Off means it never appears.
+plugin](#supporting-the-plugin). Off means it never appears. `usageStats`
+controls the daily "this install exists" ping described in [Letting me know
+this install exists](#letting-me-know-this-install-exists); off means nothing
+counts your installation anywhere.
 
 ## Tests
 
@@ -583,11 +628,21 @@ happened, noise alone triggers nothing, and a retro-fitted sail plan moves the
 right points), `notify` (the alert fires once, recovery is announced once, and
 a queued alert still gets out at anchor), `share` (nothing leaves the boat
 without consent and a boat identity, one send per threshold, and a failed send
-is retried rather than lost) and `smoke` —
+is retried rather than lost), `usage` (the daily ping cannot grow a field
+without the configuration text growing with it, nothing goes out in the first
+hour, and the install ID survives a restart) and `smoke` —
 which runs the whole plugin against a fake SignalK server over a simulated
 passage: starboard beat, tack, port beat, then a leg under engine. It checks
 that points come out of the steady legs, that none comes out of the tack or the
-engine leg, and that replaying the raw log gives the same result back.
+engine leg, and that replaying the raw log gives the same result back. The
+smoke test also asserts that **no HTTP request whatsoever** goes out during a
+test run: a `npm test` must never land in the collector's counter.
+
+The collector that receives shared polars has its own tests, run separately:
+
+```bash
+node tool/collector/test.js
+```
 
 Preview the web app with no boat and no server:
 

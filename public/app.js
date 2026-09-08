@@ -1413,14 +1413,42 @@ async function refreshSpeedo() {
 // état — ce qui est parti, quand, et ce qui partira ensuite. Plus deux liens
 // pour lire exactement ce qui sort du bateau : un partage qu'on ne peut pas
 // relire est un partage qu'on finit par couper.
+// Le ping quotidien, dit à l'écran plutôt que découvert dans le code. C'est
+// la seule donnée que le plugin envoie sans que l'équipage y gagne quoi que ce
+// soit : elle doit être la plus lisible de toutes, pas la plus discrète.
+function usageNote(u) {
+  if (!u) return '';
+  if (!u.enabled) {
+    return `<div class="hint">The daily "this install exists" ping is <b>off</b>. Nothing counts this
+      installation anywhere.</div>`;
+  }
+  const seen = u.lastSentAt ? new Date(u.lastSentAt).toLocaleDateString() : 'not yet';
+  return `<div class="hint">Once a day, separately from the polar, the plugin says that this install exists:
+    a random ID, the versions, and whether sharing is on — no position, no boat name, no polar. It is the only
+    count of how many boats run this. Last sent: <b>${seen}</b>.
+    <button class="linklike" id="btnUsageSee">See exactly what that ping contains</button>. Switch it off with
+    <i>Let me know this install exists</i> in the plugin configuration.</div>`;
+}
+
+function wireUsage() {
+  const b = $('#btnUsageSee');
+  if (b) b.onclick = () => window.open(`${API}/api/usage.json`, '_blank');
+}
+
 async function refreshShare() {
   const el = $('#share');
   if (!el) return;
   let d;
+  let u = null;
   try {
     d = await (await fetch(`${API}/api/share`)).json();
   } catch (e) {
     return;
+  }
+  try {
+    u = await (await fetch(`${API}/api/usage`)).json();
+  } catch (e) {
+    /* le ping n'est pas indispensable à l'affichage du partage */
   }
   const when = (t) => (t ? new Date(t).toLocaleDateString() : null);
   const deal = `<div class="hint">This plugin is free. In exchange it sends the polar it has learned to a shared
@@ -1433,7 +1461,9 @@ async function refreshShare() {
       deal +
       `<div class="hint warn"><b>Nothing is being collected yet.</b> Set the boat model and a name to publish under,
         in SignalK → Server → Plugin Config → Autopolar. The model is what makes a polar useful to anyone else; the
-        name can be a pseudonym.</div>`;
+        name can be a pseudonym.</div>` +
+      usageNote(u);
+    wireUsage();
     return;
   }
 
@@ -1479,8 +1509,10 @@ async function refreshShare() {
        <button class="act" id="btnSharePol">Download the shared .pol</button>
      </div>
      <div class="hint">Sent as speed over ground, true wind, median per cell — fixed, so that polars from
-       different boats can be compared. Your own display settings above do not change what is shared.</div>`;
+       different boats can be compared. Your own display settings above do not change what is shared.</div>` +
+    usageNote(u);
 
+  wireUsage();
   $('#btnShareSee').onclick = () => window.open(`${API}/api/share.json`, '_blank');
   $('#btnSharePol').onclick = () => window.open(`${API}/api/share.pol`, '_blank');
   $('#btnShareNow').onclick = async () => {

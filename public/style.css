@@ -135,6 +135,14 @@ header #btnReload { margin-left: auto; flex: none; }
 .tile.stale .k em { color: var(--warning); font-style: normal; }
 
 .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+/* Un bouton qui se lit comme un lien : sert aux « voir exactement ce qui est
+   envoyé », qui doivent rester au fil du texte plutôt que dans une barre
+   d'actions — c'est la phrase qui les rend utiles, pas le bouton. */
+.linklike {
+  background: none; border: 0; padding: 0; font: inherit; color: var(--ink-2);
+  text-decoration: underline; cursor: pointer;
+}
+.linklike:hover { color: var(--ink); }
 
 /* ── Contrôles ─────────────────────────────────────────────────────────── */
 .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }

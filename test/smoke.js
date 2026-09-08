@@ -15,6 +15,18 @@ let now = Date.parse('2026-09-02T10:00:00Z');
 const realNow = Date.now;
 Date.now = () => now;
 
+// Aucun accès réseau dans les tests, et on le vérifie au lieu de l'espérer.
+// Le plugin fait deux sorties HTTP — le reversement de la polaire et le ping
+// d'installation — et ni l'une ni l'autre n'a quoi que ce soit à faire dans
+// un `npm test` : ce serait le collecteur de production qui compterait les
+// machines de développement.
+const realFetch = global.fetch;
+const netAttempts = [];
+global.fetch = async (url) => {
+  netAttempts.push(String(url));
+  throw new Error('aucun réseau dans les tests');
+};
+
 const D2R = Math.PI / 180;
 const KN = 1 / 1.94384;
 
@@ -314,6 +326,8 @@ p2.stop();
 }
 
 plugin.stop();
+assert.deepStrictEqual(netAttempts, [], `rien ne doit sortir pendant les tests, obtenu : ${netAttempts.join(', ')}`);
+global.fetch = realFetch;
 Date.now = realNow;
 fs.rmSync(dataDir, { recursive: true, force: true });
 console.log('smoke: ok —', afterMotor, 'points,', samples.length, 'échantillons bruts');

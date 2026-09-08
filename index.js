@@ -29,6 +29,7 @@ const speedo = require('./lib/speedo');
 const sailchange = require('./lib/sailchange');
 const { createShare } = require('./lib/share');
 const { createSupport } = require('./lib/support');
+const { createUsage, pingEndpointFrom } = require('./lib/usage');
 
 // Les liens du pied de page et du bandeau « un coup de pouce ». En dur, et
 // pas dans la configuration : ce n'est pas un réglage du bateau, et un lien de
@@ -81,6 +82,7 @@ module.exports = function (app) {
   let notifier = null;
   let sharer = null;
   let supporter = null;
+  let usage = null;
   let sailSecs = 0;
   let idleAlerted = false;
   let idleRejects = {};
@@ -183,6 +185,13 @@ module.exports = function (app) {
         description:
           'A polar frozen at its first 500 points is worth much less than the same one at 3000, so each send replaces the previous one for your boat. Sending is never on a clock: nothing goes out unless new points came in.',
         default: 500,
+      },
+      usageStats: {
+        type: 'boolean',
+        title: 'Let me know this install exists',
+        description:
+          'Once a day this sends, and nothing else: a random ID drawn once on this install (tied to nothing \u2014 not your boat name, not your hardware, not your network), the plugin version, the Node version, the SignalK version, the date that ID was drawn, and whether polar sharing is on. No position, no boat name, no polar, no IP address kept by the server. It is the only way I have of knowing whether anyone out there is running this plugin. The exact payload is readable at any time in the web app, under Share. The same ID travels with a shared polar as its key, so that your sends replace each other instead of colliding with another boat of the same name \u2014 turning this off stops the daily ping, not that key.',
+        default: true,
       },
       publishPerformance: {
         type: 'boolean',
@@ -517,6 +526,10 @@ module.exports = function (app) {
       // de la collecte, sinon il ne partirait qu'en nav — c'est-à-dire pas au
       // mouillage, là où le réseau est le meilleur.
       if (sharer && store) sharer.maybeSend(opts, store.diskInfo().runCount, sharePayload);
+      // Une fois par jour au plus, et pour la même raison qu'au-dessus : hors
+      // de toute branche de la collecte, sinon un bateau qui ne navigue pas ne
+      // serait jamais compté — alors que c'est précisément une installation.
+      if (usage) usage.maybeSend(usageOpts(), usagePayload);
       tick();
     } catch (e) {
       counters.errors = (counters.errors || 0) + 1;
@@ -927,6 +940,11 @@ module.exports = function (app) {
     const info = {
       model: opts.boatModel,
       name: opts.shareName,
+      // La clé de la polaire chez le collecteur. Le nom seul ne suffit pas :
+      // deux Oceanis 48 dont les propriétaires écrivent « Jazzy » s'écrasaient
+      // l'un l'autre en silence, et changer de shareName laissait un doublon
+      // orphelin derrière soi au lieu de remplacer sa propre polaire.
+      installId: usage ? usage.id() : null,
       dims,
       version: require('./package.json').version,
       points: polar.used,
@@ -941,6 +959,32 @@ module.exports = function (app) {
       stat: 'median',
     };
     return { polar, info };
+  }
+
+  // Le corps exact du ping quotidien. Il doit rester champ pour champ celui
+  // que décrit la configuration : c'est la seule chose qui autorise à
+  // l'envoyer. Aucune donnée de nav n'entre ici, pas même le nombre de points.
+  function usagePayload() {
+    const st = usage ? usage.state() : {};
+    return {
+      schema: 1,
+      plugin: 'signalk-autopolar',
+      installId: st.installId || null,
+      version: require('./package.json').version,
+      node: process.version,
+      signalk: (app && app.config && app.config.version) || null,
+      firstSeen: st.firstSeen || null,
+      sharing: Boolean(opts.sharePolar && opts.boatModel && opts.shareName),
+    };
+  }
+
+  // Réglages passés à lib/usage.js. L'URL du ping se déduit de celle de la
+  // polaire : qui héberge son propre collecteur ne ping que le sien.
+  function usageOpts() {
+    return {
+      usageStats: Boolean(opts.usageStats),
+      usageEndpoint: pingEndpointFrom(opts.shareEndpoint),
+    };
   }
 
   // Le corps exact envoyé au collecteur. Rien de plus que ce que l'écran
@@ -1341,6 +1385,30 @@ module.exports = function (app) {
       res.json({ ok: started, state: sharer.state() });
     });
 
+    // ── Le ping quotidien ──────────────────────────────────────────────────
+    // Il est lisible exactement comme la polaire l'est, et pour la même
+    // raison : il n'a le droit d'exister que parce qu'on peut le lire.
+    router.get('/api/usage', (req, res) => {
+      const st = usage ? usage.state() : {};
+      const endpoint = pingEndpointFrom(opts.shareEndpoint);
+      res.json({
+        enabled: Boolean(opts.usageStats),
+        endpoint,
+        installId: st.installId || null,
+        firstSeen: st.firstSeen || null,
+        lastSentAt: st.lastSentAt || null,
+        nextAt: usage ? usage.nextAt() : null,
+        sent: st.sent || 0,
+        failures: st.failures || 0,
+        lastError: st.lastError || null,
+      });
+    });
+
+    router.get('/api/usage.json', (req, res) => {
+      res.type('application/json');
+      res.send(JSON.stringify(usagePayload(), null, 2));
+    });
+
     // Voir exactement ce qui part. Un partage qu'on ne peut pas relire est un
     // partage qu'on finit par couper.
     router.get('/api/share.json', (req, res) => {
@@ -1475,6 +1543,7 @@ module.exports = function (app) {
         sharePolar: true,
         shareEndpoint: 'https://autopolar.quicky.app/v1/polars',
         shareEveryPoints: 500,
+        usageStats: true,
         publishPerformance: false,
         supportPrompt: true,
       },
@@ -1511,6 +1580,8 @@ module.exports = function (app) {
     // webapp, mais le moment où la polaire devient exploitable : 15 cases
     // étayées par au moins trois mesures. Avant ça, il n'y a rien à remercier.
     supporter = createSupport(path.join(dir, 'support.json'), { minProgress: 15, againAfterProgress: 15 });
+    // En debug : un ping raté n'est la panne de personne (voir lib/usage.js).
+    usage = createUsage(path.join(dir, 'usage.json'), (m) => app.debug(`[polar] ${m}`));
 
     timer = setInterval(safeTick, 1000);
     updateStatus();
