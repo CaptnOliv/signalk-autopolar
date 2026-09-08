@@ -180,6 +180,10 @@ function createCollector(o) {
         model: body.model,
         name: body.name,
         version: body.version || (prev && prev.version) || null,
+        // Seul autopolar reverse des polaires ; l'attribution est sûre, et
+        // sans elle un bateau qui partage sans jamais pinguer ne serait
+        // rattaché à aucun plugin dans les statistiques.
+        plugin: body.plugin || (prev && prev.plugin) || 'signalk-autopolar',
         points: body.points,
         cells: body.cells,
         sharing: true,
@@ -252,10 +256,10 @@ function createCollector(o) {
     if (isNew && opts.notifyNewInstalls) {
       const c = counts();
       notify(
-        'New autopolar install',
+        `New install: ${body.plugin || 'unknown plugin'}`,
         [
-          `plugin ${body.version || '?'} on SignalK ${body.signalk || '?'}, node ${body.node || '?'}`,
-          `sharing: ${body.sharing ? 'yes' : 'no'}`,
+          `version ${body.version || '?'} on SignalK ${body.signalk || '?'}, node ${body.node || '?'}`,
+          `sharing a polar: ${body.sharing ? 'yes' : 'no'}`,
           `${c.installs} install(s) known, ${c.active30d} active in the last 30 days`,
         ].join('\n'),
         'wave,star'
@@ -269,13 +273,27 @@ function createCollector(o) {
   function stats() {
     const now = Date.now();
     const ids = Object.keys(installs);
-    const versions = {};
     const models = {};
+    // Plusieurs plugins pointent sur ce même collecteur : mélanger leurs
+    // comptes ne dirait rien de personne, et deux plugins peuvent porter le
+    // même numéro de version. Chacun le sien.
+    const plugins = {};
+    const bucket = (name) => {
+      const k = name || 'unknown';
+      plugins[k] = plugins[k] || { plugin: k, installs: 0, active30d: 0, active7d: 0, sharing: 0, polars: 0, versions: {} };
+      return plugins[k];
+    };
     let sharing = 0;
     let first = null;
     for (const id of ids) {
       const r = installs[id];
-      if (r.version) versions[r.version] = (versions[r.version] || 0) + 1;
+      const b = bucket(r.plugin);
+      b.installs++;
+      if (now - (r.lastSeen || 0) < 30 * DAY) b.active30d++;
+      if (now - (r.lastSeen || 0) < 7 * DAY) b.active7d++;
+      if (r.lastPolar) b.polars++;
+      if (r.sharing) b.sharing++;
+      if (r.version) b.versions[r.version] = (b.versions[r.version] || 0) + 1;
       if (r.sharing) sharing++;
       if (r.model) {
         const k = String(r.model);
@@ -292,8 +310,8 @@ function createCollector(o) {
       active7d: ids.filter((i) => now - (installs[i].lastSeen || 0) < 7 * DAY).length,
       sharing,
       polars: c.polars,
+      plugins: Object.values(plugins).sort((a, b) => b.installs - a.installs),
       models: Object.values(models).sort((a, b) => b.boats - a.boats || b.points - a.points),
-      versions,
       firstSeen: first ? new Date(first).toISOString() : null,
       at: new Date(now).toISOString(),
     };

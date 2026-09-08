@@ -143,8 +143,8 @@ server.listen(0, async () => {
   assert.strictEqual(r.status, 200);
   await settle();
   assert.strictEqual(notified.length, 1, 'une nouvelle installation est signalée');
-  assert.match(notified[0].title, /New autopolar install/);
-  assert.match(notified[0].body, /sharing: no/);
+  assert.match(notified[0].title, /New install: signalk-autopolar/);
+  assert.match(notified[0].body, /sharing a polar: no/);
 
   // Le lendemain, le même ping ne re-signale rien.
   notified.length = 0;
@@ -154,11 +154,34 @@ server.listen(0, async () => {
 
   assert.strictEqual((await post(port, '/v1/ping', { version: '0.7.0' })).status, 400, 'sans identifiant : refusé');
 
+  // ── Un deuxième plugin sur le même collecteur ───────────────────────────
+  // `signalk-ac42-autopilot` pointe sur la même URL pour l'instant. Les deux
+  // comptes ne doivent pas se mélanger : deux plugins peuvent porter le même
+  // numéro de version, et « 12 installations » ne voudrait plus rien dire.
+  notified.length = 0;
+  r = await post(port, '/v1/ping', {
+    schema: 1,
+    plugin: 'signalk-ac42-autopilot',
+    installId: 'eeeeeeee-0000-0000-0000-000000000000',
+    version: '1.2.0',
+    node: 'v22.5.0',
+    signalk: '2.13.0',
+  });
+  assert.strictEqual(r.status, 200);
+  await settle();
+  assert.match(notified[0].title, /New install: signalk-ac42-autopilot/, 'la notification dit de quel plugin il s\'agit');
+
   // ── Le compte ───────────────────────────────────────────────────────────
   const st = (await req(port, 'GET', '/v1/stats')).body;
-  assert.strictEqual(st.installs, 3, 'deux bateaux qui partagent, plus un qui ne fait que pinguer');
+  assert.strictEqual(st.installs, 4, 'deux bateaux qui partagent, un qui ne fait que pinguer, plus un autre plugin');
+  const byPlugin = Object.fromEntries(st.plugins.map((p) => [p.plugin, p]));
+  assert.strictEqual(byPlugin['signalk-autopolar'].installs, 3, 'les polaires sont attribuées à autopolar');
+  assert.strictEqual(byPlugin['signalk-autopolar'].polars, 2);
+  assert.strictEqual(byPlugin['signalk-ac42-autopilot'].installs, 1, 'et le pilote compte pour lui seul');
+  assert.strictEqual(byPlugin['signalk-ac42-autopilot'].polars, 0, 'un plugin sans polaire n\'en invente pas');
+  assert.deepStrictEqual(byPlugin['signalk-ac42-autopilot'].versions, { '1.2.0': 1 });
   assert.strictEqual(st.polars, 2, 'deux polaires, l\'envoi sans identifiant n\'étant compté nulle part');
-  assert.strictEqual(st.active7d, 3);
+  assert.strictEqual(st.active7d, 4);
   assert.strictEqual(st.models[0].model, 'Beneteau Oceanis 48');
   assert.strictEqual(st.models[0].boats, 2);
   // Un compteur public n'a pas besoin des noms de bateaux, et cette route
@@ -194,7 +217,7 @@ server.listen(0, async () => {
 
   // ── Le registre survit à un redémarrage ─────────────────────────────────
   const { stats: stats2 } = createCollector({ dir, log: () => {} });
-  assert.strictEqual(stats2().installs, 4, 'le compte est relu sur disque');
+  assert.strictEqual(stats2().installs, 5, 'le compte est relu sur disque');
 
   server.close();
   fs.rmSync(dir, { recursive: true, force: true });

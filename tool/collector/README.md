@@ -61,7 +61,7 @@ donc encodés en RFC 2047, que ntfy sait décoder.
 |---|---|
 | `NTFY_URL` | l'URL du topic, par exemple `https://ntfy.quicky.app/jazzy`. Vide = pas de notification |
 | `NTFY_TOKEN` | jeton `Bearer`, si le serveur en demande un |
-| `NTFY_NEW_INSTALLS` | `1` pour être aussi prévenu à chaque nouvelle installation (pas seulement à chaque polaire). Coupé par défaut |
+| `NTFY_NEW_INSTALLS` | `1` pour être aussi prévenu à chaque nouvelle installation, tous plugins confondus (pas seulement à chaque polaire). Le titre dit de quel plugin il s'agit. Coupé par défaut |
 
 ## Statistiques
 
@@ -72,8 +72,13 @@ n'en a pas besoin, et cette route n'est protégée par rien.
 {
   "installs": 12, "active30d": 9, "active7d": 7,
   "sharing": 10, "polars": 6,
+  "plugins": [
+    { "plugin": "signalk-autopolar", "installs": 8, "active30d": 7,
+      "active7d": 6, "sharing": 8, "polars": 6, "versions": { "0.7.0": 8 } },
+    { "plugin": "signalk-ac42-autopilot", "installs": 4, "active30d": 2,
+      "active7d": 1, "sharing": 0, "polars": 0, "versions": { "1.2.0": 4 } }
+  ],
   "models": [{ "model": "Beneteau Oceanis 48", "boats": 2, "points": 1380 }],
-  "versions": { "0.7.0": 11, "0.6.1": 1 },
   "firstSeen": "2026-09-08T10:00:00.000Z"
 }
 ```
@@ -81,6 +86,13 @@ n'en a pas besoin, et cette route n'est protégée par rien.
 `installs` compte les installations qui se sont signalées au moins une fois,
 `polars` celles qui ont effectivement reversé une polaire — l'écart entre les
 deux est le nombre de bateaux qui font tourner le plugin sans partager.
+
+**Plusieurs plugins pointent sur ce collecteur** (`signalk-ac42-autopilot` y
+envoie aussi son ping, sous le même nom de domaine pour l'instant). D'où le
+détail par plugin : mélanger les comptes ne dirait rien de personne, et deux
+plugins peuvent parfaitement porter le même numéro de version. Une polaire
+reçue sans champ `plugin` est attribuée à `signalk-autopolar`, seul plugin qui
+en reverse.
 
 ## Tests
 
