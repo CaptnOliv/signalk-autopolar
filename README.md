@@ -503,13 +503,12 @@ can check a declaration. The web app shows the whole payload at any time
 (**See exactly what is sent**), which is the point: a contribution you cannot
 read is one you end up switching off.
 
+For now there is no frontend to download the built polars, because there is not enough polars shared (actually only mine as per September 2026), but as soon as it gets some polar to share, I will make the frontend so everyone can consult them !
+
 ## Letting me know this install exists
 
 There is no honest way to find out whether anyone is running a SignalK plugin.
-npm download counts are mostly mirrors and security scanners — this package got
-191 "downloads" on its publication day and none since — and a boat that
-installed once and then sails for three years without updating never appears
-again. The collector only ever sees the boats that share a polar.
+npm download is not reliable. The collector only ever sees the boats that share a polar.
 
 So, once a day, the plugin says that it exists. It sends this and nothing else:
 
@@ -525,24 +524,14 @@ No position. No boat name. No polar. **No IP address is kept by the server.**
 The exact payload is readable at any time in the web app, under Share → *See
 exactly what that ping contains*, and served raw at `/api/usage.json`.
 
-Nothing goes out in the first hour of running: an install that gets tried for
-five minutes and removed is not an install, and a `npm test` is not one either.
-A failed ping is simply lost — there is no retry queue, deliberately. A
-statistic has no business being handled more carefully than the things that
-actually serve the crew.
-
 Switch it off with **Let me know this install exists** in the plugin
-configuration. The plugin then works exactly as before.
+configuration if you don't want to let me know you use it. The plugin then works exactly as before.
 
-One thing this ID also does: it travels with a shared polar as its key. The
+One more thing this ID also does: it travels with a shared polar as its key. The
 boat name alone could not do that job — two Oceanis 48 whose owners both typed
 "Jazzy" used to overwrite each other's polar in the pool, in silence, and
 renaming your boat left an orphan copy behind instead of replacing your own.
 Turning the ping off stops the daily ping, not that key.
-
-I would rather ask for this in plain sight and have some of you say no, than
-hide it behind a "connectivity check" and have you find it in the source. It is
-MIT-licensed JavaScript on a server you own; you would find it.
 
 ## Idle alert (ntfy)
 
