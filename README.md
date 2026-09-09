@@ -627,11 +627,8 @@ engine leg, and that replaying the raw log gives the same result back. The
 smoke test also asserts that **no HTTP request whatsoever** goes out during a
 test run: a `npm test` must never land in the collector's counter.
 
-The collector that receives shared polars has its own tests, run separately:
-
-```bash
-node tool/collector/test.js
-```
+The collector that receives shared polars lives in its own repository, with its
+own tests.
 
 Preview the web app with no boat and no server:
 
