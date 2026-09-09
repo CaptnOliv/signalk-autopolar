@@ -341,12 +341,14 @@ module.exports = function (app) {
             type: 'number',
             title: 'Pitch swing above which the sea counts as moderate (deg)',
             description:
-              'Sea state is measured, not typed in: it is the peak-to-peak pitch over the window. These two thresholds turn that number into a word, and they are a starting guess for a 15 m boat — check them against a day you remember and adjust. The measurement itself is stored raw either way.',
+              'Sea state is measured, not typed in: it is the peak-to-peak pitch over the window. These two thresholds turn that number into a word, and they are a starting guess for a 15 m boat — check them against a day you remember and adjust. The measurement itself is stored raw either way. Defaults are 3 (moderate) and 8 (rough); with a DST810 the recommended pair is 0.8 and 2.0 — its attitude sensor reports smaller, cleaner pitch swings.',
             default: 3,
           },
           seaStateRoughDeg: {
             type: 'number',
             title: 'Pitch swing above which the sea counts as rough (deg)',
+            description:
+              'Default 8. With a DST810, use 2.0 (its attitude sensor reads smaller, cleaner pitch swings than a typical IMU).',
             default: 8,
           },
         },
