@@ -5,7 +5,8 @@ sailed. The more miles you put in, the better it gets — and you never have to
 sail a single test run.
 Built-in web app: live recording state, polar diagram, VMG analysis, SOG against STW and
 true against apparent wind, scatter of the underlying measurements, outlier
-editing, speed-sensor diagnostic, and `.pol` / CSV export.
+editing, speed-sensor diagnostic, `.pol` / Jieter / CSV export, and a direct
+hand-off to [Polar Management](https://github.com/Asw1n/signalk-polar-management).
 
 ![The web app under way](docs/overview.png)
 
@@ -390,8 +391,31 @@ metadata and serves only the API (`/api/...`).
   anchor, where "now" means nothing.
 - **Worth changing sail?** — what the other sail plans did in this wind at this
   angle, with the evidence behind each row (see above).
-- **Export** — `.pol` (qtVlm, OpenCPN, Expedition), CSV with the sample count
-  per cell, full JSON backup, and the raw `.jsonl`.
+- **Export** — `.pol` (qtVlm, OpenCPN, Expedition), Jieter text (semicolon
+  matrix with VMG target rows, the format the ORC world and Polar Management
+  read), CSV with the sample count per cell, full JSON backup, and the raw
+  `.jsonl`. **Send to Polar Management** appears when that plugin is installed
+  on the same server (see below).
+
+## Polar Management hand-off
+
+[signalk-polar-management](https://github.com/Asw1n/signalk-polar-management)
+stores, names and activates polar tables as a Signal K `polars` resource that
+other apps consume. When it is running on the same server, autopolar's Export
+card shows a **Send to Polar Management** button.
+
+It hands over the current polar in the canonical
+[polar-format](https://github.com/Asw1n/polar-format) document (SI units, TWS ×
+TWA matrix, VMG targets) straight through the Signal K resources API — no file,
+no copy-paste, no import step. The reading sent is always SOG against true
+wind: the honest, comparable axes, the same ones autopolar shares upstream.
+
+The polar lands under a **stable id** (`autopolar`, or `autopolar-<share name>`
+when a share name is set), so every send **replaces** the previous one instead
+of piling up dated copies. Pick it as the active polar once in Polar
+Management; from then on, pressing the button keeps it current. Nothing else in
+Polar Management is touched — your other stored polars and the active-polar
+choice are left alone.
 
 ## Fixing the sail plan after the fact
 

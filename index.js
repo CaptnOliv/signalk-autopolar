@@ -1474,6 +1474,86 @@ module.exports = function (app) {
       res.type('application/json');
       res.send(JSON.stringify({ runs: store.runs(), overrides: store.overrides(), opts }, null, 2));
     });
+    router.get('/api/export.jieter', (req, res) => {
+      res.type('text/plain');
+      res.send(polarLib.toJieter(polarLib.buildPolar(store.runs(), polarOpts(req.query))));
+    });
+
+    // ── Envoi direct vers signalk-polar-management ──────────────────────────
+    // S'il tourne sur le même serveur, il stocke les polaires en ressource
+    // SignalK « polars ». On lui passe la nôtre au format canonique
+    // polar-format via l'API de ressources, sans passer par un fichier. Un
+    // seul id stable : chaque envoi remplace le précédent au lieu d'empiler
+    // des copies datées.
+    const PM_PLUGIN = 'signalk-polar-management';
+    function polarMgmtProvider() {
+      try {
+        const api = app.resourcesApi;
+        if (!api || typeof api.checkForProvider !== 'function') return null;
+        return api.checkForProvider('polars', PM_PLUGIN) || api.checkForProvider('polars') || null;
+      } catch (e) {
+        return null;
+      }
+    }
+    function polarMgmtId() {
+      const slug = String(opts.shareName || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      return slug ? `autopolar-${slug}` : 'autopolar';
+    }
+
+    router.get('/api/polar-management', (req, res) => {
+      const provider = polarMgmtProvider();
+      res.json({ available: !!provider, provider: provider || null, id: polarMgmtId() });
+    });
+
+    router.post('/api/polar-management/send', async (req, res) => {
+      const provider = polarMgmtProvider();
+      if (!provider) {
+        return res.json({ ok: false, error: 'signalk-polar-management is not installed on this server' });
+      }
+      // La lecture honnête et comparable — SOG, vent vrai — comme la polaire
+      // partagée. Les réglages d'affichage de la webapp ne la regardent pas.
+      let doc;
+      try {
+        doc = polarLib.toCanonical(polarLib.buildPolar(store.runs(), polarOpts({ speed: 'sog', wind: 'true' })), {
+          name: opts.shareName || 'Autopolar',
+          boatType: opts.boatModel || '',
+          notes: 'Auto-learned from sailing by signalk-autopolar',
+        });
+      } catch (e) {
+        return res.json({ ok: false, error: e.message });
+      }
+      const id = polarMgmtId();
+      try {
+        await app.resourcesApi.setResource('polars', id, doc, PM_PLUGIN);
+      } catch (e) {
+        return res.json({ ok: false, error: String((e && e.message) || e) });
+      }
+      // setResource du serveur SignalK n'attend pas le fournisseur et avale son
+      // rejet : on relit la ressource pour confirmer qu'elle a bien été écrite.
+      let confirmed = false;
+      try {
+        const back = await app.resourcesApi.getResource('polars', id);
+        confirmed = !!(back && back.values && Array.isArray(back.values.boatSpeedMatrix));
+      } catch (e) {
+        confirmed = false;
+      }
+      const cells = doc.values.boatSpeedMatrix.reduce((n, r) => n + r.filter((v) => v > 0).length, 0);
+      res.json({
+        ok: true,
+        id,
+        provider,
+        confirmed,
+        twsBands: doc.axes.tws.length,
+        cells,
+        note: confirmed
+          ? `Sent to Polar Management as '${id}'.`
+          : `Write submitted as '${id}', but read-back could not confirm it — check the Polar Management page.`,
+      });
+    });
+
     router.get('/api/samples.jsonl', (req, res) => {
       res.type('text/plain');
       fs.createReadStream(store.files().samplesFile).on('error', () => res.end()).pipe(res);

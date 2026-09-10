@@ -205,9 +205,14 @@
       <h2>Export &amp; maintenance</h2>
       <div class="row-actions">
         <button class="act" id="btnPol">Download .pol</button>
+        <button class="act" id="btnJieter">Jieter text</button>
         <button class="act" id="btnCsv">CSV</button>
         <button class="act" id="btnJson">JSON backup</button>
         <button class="act" id="btnRaw">Raw log (.jsonl)</button>
+      </div>
+      <div class="row-actions" id="pmRow" hidden>
+        <button class="act" id="btnSendPM">Send to Polar Management</button>
+        <span class="msg" id="pmMsg"></span>
       </div>
       <div class="row-actions">
         <button class="act" id="btnRebuildDry">Dry-run a replay</button>

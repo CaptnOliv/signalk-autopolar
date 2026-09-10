@@ -98,6 +98,38 @@ const polText = p.toPol(pol);
 assert.ok(polText.startsWith('twa/tws\t10'));
 assert.ok(polText.split('\n').every((l) => !/^\d+(\t0)+$/.test(l)), 'pas de ligne entièrement vide');
 
+// Export Jieter : la même matrice, séparateur point-virgule, en-tête en
+// commentaire, lignes de cible VMG (une seule valeur non nulle) en fin.
+const jieterText = p.toJieter(pol);
+const jl = jieterText.trim().split('\n');
+assert.ok(jl[0].startsWith('# signalk-autopolar'), 'un en-tête en commentaire');
+assert.ok(jl[1].startsWith('twa/tws;10'), 'ligne d’en-tête TWS en point-virgule');
+assert.ok(jl.slice(1).every((l) => l.split(';').length === 2), 'une bande de vent => deux colonnes');
+// Les lignes de cible VMG (près + portant) s'ajoutent après la matrice : le
+// Jieter a donc plus de lignes utiles que le .pol tabulé équivalent.
+assert.ok(
+  jl.length > polText.trim().split('\n').length + 1,
+  'des lignes de cible VMG en plus de la matrice'
+);
+
+// Format canonique polar-format : unités SI, matrice alignée sur les axes,
+// axes strictement croissants, angles dans 0..π.
+const canon = p.toCanonical(pol, { name: 'Jazzy', boatType: 'Oceanis 48' });
+assert.strictEqual(canon.kind, 'polarTable');
+assert.strictEqual(canon.units.twa, 'rad');
+assert.strictEqual(canon.axes.tws.length, canon.values.boatSpeedMatrix.length);
+assert.ok(canon.values.boatSpeedMatrix.every((r) => r.length === canon.axes.twa.length), 'colonnes = axe TWA');
+assert.ok(canon.axes.twa.every((v, i) => i === 0 || v > canon.axes.twa[i - 1]), 'TWA strictement croissant');
+assert.ok(canon.axes.twa.every((v) => v >= 0 && v <= Math.PI), 'TWA dans 0..π');
+assert.ok(Math.abs(canon.axes.tws[0] - 10 / 1.94384) < 1e-6, 'TWS converti en m/s');
+assert.strictEqual(canon.name, 'Jazzy');
+assert.strictEqual(canon.boatType, 'Oceanis 48');
+assert.strictEqual(canon.source, 'signalk-autopolar');
+assert.strictEqual(p.validateCanonicalShape(canon), null, 'le document canonique passe la validation');
+
+// Une polaire sans aucune case mesurée ne s’envoie pas.
+assert.throws(() => p.toCanonical(p.buildPolar([], { twsBins: [10], twaStep: 10 })), /polaire vide/);
+
 // ── Voisinage de la VMG optimale ──────────────────────────────────────────
 // Connaître le meilleur angle ne suffit pas : ce qu'on barre, c'est la forme
 // de la cloche autour de lui. On vérifie que les voisins sont bien rapportés

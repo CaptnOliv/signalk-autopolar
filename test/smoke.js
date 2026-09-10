@@ -213,6 +213,14 @@ assert.ok(loose.count > dry.count, 'une fenêtre plus courte donne plus de point
 // Exports.
 assert.ok(call('GET /api/export.pol', { min: '1' }).startsWith('twa/tws\t'));
 assert.ok(call('GET /api/export.csv', { min: '1' }).includes('twa,'));
+const jieter = call('GET /api/export.jieter', { min: '1' });
+assert.ok(/^# signalk-autopolar/.test(jieter) && /\ntwa\/tws;/.test(jieter), 'export Jieter bien formé');
+
+// Polar Management : le faux serveur n'a pas de resourcesApi, donc indisponible,
+// et l'envoi est refusé proprement plutôt que de lever une exception.
+const pm = call('GET /api/polar-management');
+assert.strictEqual(pm.available, false, 'pas de resourcesApi => Polar Management indisponible');
+assert.strictEqual(call('POST /api/polar-management/send', {}, {}).ok, false, 'envoi refusé, sans exception');
 
 // Un coup de pouce : le bandeau ne s'ouvre pas sur une polaire de 20 points,
 // et une réponse le ferme définitivement. La règle elle-même est testée nue

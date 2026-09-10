@@ -1615,9 +1615,27 @@ function syncControls() {
 function bindActions() {
   const dl = (path) => () => window.open(`${API}${path}?${query()}`, '_blank');
   $('#btnPol').onclick = dl('/api/export.pol');
+  $('#btnJieter').onclick = dl('/api/export.jieter');
   $('#btnCsv').onclick = dl('/api/export.csv');
   $('#btnJson').onclick = dl('/api/export.json');
   $('#btnRaw').onclick = () => window.open(`${API}/api/samples.jsonl`, '_blank');
+
+  // « Send to Polar Management » : visible seulement si le plugin tourne sur
+  // ce serveur. Il reçoit la polaire à jour en direct, sans export/import.
+  fetch(`${API}/api/polar-management`)
+    .then((r) => r.json())
+    .then((pm) => {
+      if (!pm || !pm.available) return;
+      $('#pmRow').hidden = false;
+      $('#btnSendPM').onclick = async () => {
+        $('#pmMsg').textContent = 'sending…';
+        const r = await post('/api/polar-management/send', {});
+        $('#pmMsg').textContent = r.ok
+          ? `✓ ${r.note} ${r.cells} cells over ${r.twsBands} wind bands`
+          : `✗ ${r.error}`;
+      };
+    })
+    .catch(() => {});
 
   const say = (t) => ($('#maintMsg').textContent = t);
   $('#btnRebuildDry').onclick = async () => {
