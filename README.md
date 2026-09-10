@@ -482,6 +482,87 @@ many wind bands you have covered, the span of angles, the median confidence of
 the windows — and, when it falls short, *what is missing* rather than just a
 grade.
 
+## Drafting a polar from the server history
+
+If the server already keeps history — [signalk-history-sqlite][hsq],
+signalk-to-influxdb2, or any other plugin that implements the
+[Signal K History API][hapi] — then months of wind and speed may already be on
+disk from before autopolar was ever installed. **Export & maintenance → Check
+history data** reads it and tells you what it would give. Nothing is written
+until you press the second button.
+
+[hsq]: https://github.com/meri-imperiumi/signalk-history-sqlite
+[hapi]: https://github.com/SignalK/specification
+
+The points it produces are marked as drafts (`origin: "history"`), live in
+their own file, and can be dropped in one click. Three rules make them safe to
+mix with real measurements.
+
+**The filter does not change.** Draft points go through the same
+`lib/gate.js`, with the same thresholds, as a point recorded live. What differs
+is the raw material, not the judgement passed on it. A separate "history mode"
+filter would drift from the real one, and a cell of the polar would no longer
+mean the same thing depending on where it came from.
+
+**The degradation is measured, not assumed.** A history store aggregates into
+time buckets, and asking for 60-second buckets would smooth away exactly the
+scatter the filter exists to reject. So autopolar measures the resolution
+instead of guessing it: it tries 1, 2, 3, 5 then 10-second buckets on the
+busiest stretch of the range and keeps the finest one whose buckets come back
+full. On a real store sampling at roughly 1 Hz this lands on 2 s — at 1 s more
+than a quarter of the buckets are empty, and every window would break on a
+hole. Two further guards follow from the same idea: below six readings per
+window the import is **refused** (drift and scatter mean nothing on two
+samples), and from 5 s upwards the bucket's own min/max are requested as well,
+so the scatter the average erased is still there to be rejected.
+
+Angles are read with `first`, never averaged. Dead downwind, the mean of +179°
+and −179° is 0° — the measurement would come back inverted, and the point would
+land close-hauled.
+
+**A period the plugin watched itself is never overwritten.** The raw log says
+which seconds autopolar has already seen at full rate; the import fills the
+gaps and leaves the rest alone. Otherwise a smoothed reading could quietly
+overturn a deliberate rejection.
+
+### What it needs, and what it does without
+
+Apparent wind angle, apparent wind speed and speed over ground are required.
+`propulsion.<engine>.state` (or `.revolutions`) is required too, and this one is
+not negotiable: without it nothing tells a sail from a motor leg after the
+fact. There is no retroactive "trust me, I was sailing" — the declaration for
+boats with no engine data at all (see above) is bounded in time and expires,
+which is what makes it acceptable; the same promise spread over three months of
+archive would not be.
+
+Engine state is often published only once a minute. The last known value is
+therefore carried forward — **and backward**. If the engine starts at 10:36:00
+and the next sample lands at 10:36:30, the half minute in between would look
+like sailing, so every "running" reading is surrounded by a guard band the
+width of the measured publishing interval. Same prudence as the live filter:
+collecting one point under engine dirties the polar for good, missing one costs
+only that point.
+
+Everything else is a bonus. No speed through water: the SOG polar only, which
+is [the honest axis anyway](#is-your-speed-sensor-telling-the-truth). No true
+wind: it is computed from the apparent, as on any boat without a derived-data
+plugin. No heading or rate of turn: manoeuvres are read from the wind angle
+alone — a tack shows as a change of tack, and a turn that keeps the wind angle
+constant was never a criterion in the first place. No attitude: sea state is
+not measured on those points, and says so rather than carrying an invented
+number.
+
+### It is drafted, not guessed
+
+The count on the button is not an estimate. The check really builds the points
+and then throws them away, so the number announced is the number written.
+
+Draft points count in [the shared polar](#sharing-your-polar), and the payload
+says how many of them there are — the collector can weight them or set them
+aside, but they are never passed off as measurements taken live. A segmented
+control in the web app hides them from the diagram without deleting anything,
+which is how you see the polar of your own measurements alone.
+
 ## Sharing your polar
 
 This plugin is free and stays free. In exchange, the polar it learns from your
@@ -587,6 +668,8 @@ In the plugin data directory (`~/.signalk/plugin-config-data/signalk-autopolar/`
 | `samples.jsonl` | all raw data under sail, 1 line/s, before the gate |
 | `runs.jsonl` | the accepted points (one condensed stable window each) |
 | `overrides.json` | hand-made exclusions and overridden values |
+| `history.jsonl` | the draft points read back from the server history store |
+| `history.json` | what has been imported (range, resolution), and the cached live-coverage index |
 | `sail.json` | the current sail plan |
 | `declare.json` | the running "I am sailing" declaration, if any |
 | `share.json` | what has already been sent to the pool, and when |
@@ -617,6 +700,11 @@ thresholds — the operation is reversible as many times as you like.
 stay off if another polar plugin is installed: they would all write to the same
 `performance.*` paths.
 
+`historyProvider` and `historyResolutionS` only affect [drafting a polar from
+the server history](#drafting-a-polar-from-the-server-history): which store is
+read, and whether to override the resolution autopolar measures for itself.
+Neither reads anything until you press the button.
+
 `supportPrompt` controls the one banner described in [Supporting the
 plugin](#supporting-the-plugin). Off means it never appears. `usageStats`
 controls the daily "this install exists" ping described in [Letting me know
@@ -643,11 +731,18 @@ a queued alert still gets out at anchor), `share` (nothing leaves the boat
 without consent and a boat identity, one send per threshold, and a failed send
 is retried rather than lost), `usage` (the daily ping cannot grow a field
 without the configuration text growing with it, nothing goes out in the first
-hour, and the install ID survives a restart) and `smoke` —
+hour, and the install ID survives a restart), `history` (angles are never averaged, the
+engine guard band works in both directions, the resolution is measured on a
+store whose 1-second buckets are one-third empty, and an already-watched period
+is left alone) and `smoke` —
 which runs the whole plugin against a fake SignalK server over a simulated
 passage: starboard beat, tack, port beat, then a leg under engine. It checks
 that points come out of the steady legs, that none comes out of the tack or the
-engine leg, and that replaying the raw log gives the same result back. The
+engine leg, and that replaying the raw log gives the same result back. It then
+plugs a fake history store into the same running instance and checks the four
+properties that make a draft harmless: it lands in its own file, a replay of
+the raw log does not wipe it, a period already watched live is not re-imported,
+and the points stay recognisable, filterable and counted in the share. The
 smoke test also asserts that **no HTTP request whatsoever** goes out during a
 test run: a `npm test` must never land in the collector's counter.
 

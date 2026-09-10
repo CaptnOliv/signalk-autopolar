@@ -37,6 +37,7 @@ function node(v) {
 const fakeApp = {
   getDataDirPath: () => dataDir,
   setPluginStatus: () => {},
+  debug: () => {},
   error: (e) => {
     throw e;
   },
@@ -169,6 +170,14 @@ function call(key, query = {}, body = {}) {
   let out = null;
   routes[key]({ query, body }, { json: (v) => (out = v), type: () => {}, send: (v) => (out = v), end: () => {} });
   return out;
+}
+// Les routes de l'historique sont asynchrones (elles interrogent le serveur) :
+// on attend la réponse au lieu de lire un null.
+function callAsync(key, query = {}, body = {}) {
+  return new Promise((resolve, reject) => {
+    const res = { json: resolve, type: () => {}, send: resolve, end: () => resolve(null) };
+    Promise.resolve(routes[key]({ query, body }, res)).catch(reject);
+  });
 }
 
 const status = call('GET /api/status');
@@ -333,9 +342,203 @@ p2.stop();
   fs.rmSync(bare, { recursive: true, force: true });
 }
 
-plugin.stop();
-assert.deepStrictEqual(netAttempts, [], `rien ne doit sortir pendant les tests, obtenu : ${netAttempts.join(', ')}`);
-global.fetch = realFetch;
-Date.now = realNow;
-fs.rmSync(dataDir, { recursive: true, force: true });
-console.log('smoke: ok —', afterMotor, 'points,', samples.length, 'échantillons bruts');
+// ── Ébauche depuis le History API ─────────────────────────────────────────
+//
+// Un faux magasin d'historique : 45 min de largue la VEILLE de la nav
+// simulée. On vérifie les quatre propriétés qui font qu'une ébauche ne peut
+// pas abîmer une polaire :
+//   — elle vit dans son propre fichier, runs.jsonl n'est pas touché ;
+//   — un rejeu du brut ne l'efface pas ;
+//   — les périodes déjà observées en direct ne sont pas ré-importées ;
+//   — les points restent reconnaissables, filtrables, et comptés au partage.
+async function historyTests() {
+  const HIST_FROM = Date.parse('2026-09-01T08:00:00Z');
+  const HIST_MIN = 45;
+  // Le brut du magasin : une mesure toutes les 1,5 s, comme sur le vrai — d'où
+  // des trous à 1 s de résolution et des tranches pleines à 2 s.
+  const raw = [];
+  for (let ms = 0; ms < HIST_MIN * 60000; ms += 1500) {
+    raw.push({
+      t: HIST_FROM + ms,
+      awa: (105 + Math.sin(ms / 600000) * 8) * D2R,
+      aws: (9 + Math.sin(ms / 420000) * 0.6) * KN,
+      sog: (5.5 + Math.sin(ms / 300000) * 0.3) * KN,
+    });
+  }
+  // L'état moteur, une fois par minute : la cadence réelle quand il arrive du
+  // Cerbo par MQTT. C'est elle qui rend la bande de garde nécessaire.
+  const engine = [];
+  for (let ms = 0; ms <= HIST_MIN * 60000; ms += 60000) engine.push({ t: HIST_FROM + ms, v: 'stopped' });
+
+  const AGG = {
+    average: (v) => v.reduce((a, b) => a + b, 0) / v.length,
+    first: (v) => v[0],
+    min: (v) => Math.min(...v),
+    max: (v) => Math.max(...v),
+  };
+  let queries = 0;
+  const fakeHistory = {
+    getPaths: async () => [
+      'environment.wind.angleApparent',
+      'environment.wind.speedApparent',
+      'navigation.speedOverGround',
+      'propulsion.Engine1.state',
+    ],
+    getContexts: async () => ['vessels.self'],
+    getValues: async (q) => {
+      queries++;
+      const from = q.from.epochMilliseconds;
+      const to = q.to.epochMilliseconds;
+      const res = (q.resolution || (to - from) / 1000) * 1000;
+      assert.ok(Number.isFinite(from) && Number.isFinite(to), 'le plugin passe bien des instants lisibles');
+      const values = q.pathSpecs.map((sp) => ({ path: sp.path, method: sp.aggregate }));
+      const rows = [];
+      for (let b = from; b < to; b += res) {
+        const inBucket = raw.filter((x) => x.t >= b && x.t < b + res);
+        const eng = engine.filter((x) => x.t >= b && x.t < b + res);
+        rows.push([
+          new Date(b).toISOString(),
+          ...values.map((v) => {
+            if (v.path === 'propulsion.Engine1.state') return eng.length ? eng[0].v : null;
+            if (!inBucket.length) return null;
+            const key =
+              v.path === 'environment.wind.angleApparent' ? 'awa' : v.path === 'environment.wind.speedApparent' ? 'aws' : 'sog';
+            return AGG[v.method](inBucket.map((x) => x[key]));
+          }),
+        ]);
+      }
+      return { context: 'vessels.self', range: { from: q.from.toString(), to: q.to.toString() }, values, data: rows };
+    },
+  };
+  // Le plugin lit `app.getHistoryApi` au moment de l'appel : on peut donc
+  // brancher le faux magasin sur l'instance déjà en route, qui a de vraies
+  // mesures et un vrai brut derrière elle.
+  fakeApp.getHistoryApi = async () => fakeHistory;
+
+  const check = await callAsync('POST /api/history/check');
+  assert.strictEqual(check.verdict, 'ok', `la vérification aboutit, obtenu ${check.verdict} — ${check.why || ''}`);
+  assert.strictEqual(check.resolution, 2, "la résolution est mesurée : 2 s, parce qu'à 1 s une tranche sur trois est vide");
+  assert.strictEqual(check.windowSamples, 15, 'une fenêtre de 30 s tient sur 15 tranches de 2 s');
+  assert.ok(check.points > 10, `des points sortent des 45 min de largue, obtenu ${check.points}`);
+  assert.ok(check.sailingMs > 30 * 60000, 'le temps sous voile trouvé est annoncé');
+  assert.strictEqual(check.engineCadenceMs, 60000, 'la cadence de publication du moteur est mesurée');
+  assert.ok(check.missing.some((m) => m.key === 'stw'), 'ce qui manque est nommé (ici la vitesse surface)');
+  assert.ok(check.bands.length, 'les forces de vent couvertes sont annoncées');
+
+  // Une vérification n'écrit rien : c'est tout l'intérêt du premier bouton.
+  assert.ok(!fs.existsSync(path.join(dataDir, 'history.jsonl')), "la vérification n'a rien écrit");
+  const runsBefore = fs.readFileSync(path.join(dataDir, 'runs.jsonl'), 'utf8');
+
+  const imp = await callAsync('POST /api/history/import');
+  assert.strictEqual(imp.ok, true, `import : ${imp.why || ''}`);
+  assert.strictEqual(imp.points, check.points, 'le nombre annoncé est celui qui est écrit — pas une estimation');
+  assert.strictEqual(fs.readFileSync(path.join(dataDir, 'runs.jsonl'), 'utf8'), runsBefore, 'les mesures du plugin ne sont pas touchées');
+  const drafted = fs.readFileSync(path.join(dataDir, 'history.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.strictEqual(drafted.length, imp.points);
+  assert.ok(
+    drafted.every((r) => r.origin === 'history' && r.res === 2 && r.engineSource === 'history'),
+    'chaque point porte son origine'
+  );
+  assert.ok(drafted.every((r) => r.stw === null), "sans vitesse surface archivée, rien n'est inventé");
+
+  // Deux imports d'affilée ne doublent pas les points : la plage est
+  // remplacée, pas empilée. C'est le bouton sur lequel on clique deux fois.
+  const again = await callAsync('POST /api/history/import');
+  assert.strictEqual(again.total, imp.total, "un second import remplace au lieu d'empiler");
+
+  // La polaire les voit, et le filtre d'affichage les cache sans rien effacer.
+  const withDraft = call('GET /api/polar', { min: '1', history: '1' });
+  const without = call('GET /api/polar', { min: '1', history: '0' });
+  assert.strictEqual(withDraft.used - without.used, imp.points, "le filtre d'affichage retire exactement les points d'ébauche");
+  const st = call('GET /api/status');
+  assert.strictEqual(st.disk.historyCount, imp.points);
+  assert.strictEqual(st.disk.liveCount + st.disk.historyCount, st.disk.runCount);
+
+  // Le partage les emmène ET les compte : c'est la contrepartie de les
+  // envoyer. Un point d'ébauche qui passerait pour une mesure prise en direct,
+  // personne ne pourrait le pondérer chez le collecteur.
+  // La route rend du texte (JSON indenté, relisible à l'écran) : on le relit.
+  const shared = JSON.parse(call('GET /api/share.json'));
+  assert.strictEqual(shared.historyPoints, imp.points, "le nombre de points d'ébauche part avec la polaire");
+  assert.ok(shared.points >= imp.points);
+  // Et le partage ignore le réglage d'affichage : ce qu'on reverse est ce que
+  // la carte Share montre, pas ce qu'on regarde à l'écran.
+  assert.strictEqual(JSON.parse(call('GET /api/share.json', { history: '0' })).historyPoints, imp.points);
+
+  // Un rejeu du brut n'efface pas l'ébauche : c'est la raison du fichier
+  // séparé. Dans un runs.jsonl commun, elle disparaîtrait sans un mot.
+  const replay = call('POST /api/rebuild', {}, { opts: { windowS: 30 } });
+  assert.ok(replay.count > 0);
+  assert.strictEqual(call('GET /api/status').disk.historyCount, imp.points, "le rejeu du brut laisse l'ébauche en place");
+
+  // Les périodes déjà observées en direct ne sont pas ré-importées. On le
+  // vérifie sur la nav simulée : elle est dans le magasin comme dans le brut,
+  // et rien n'en ressort.
+  const simFrom = Date.parse('2026-09-02T10:00:00Z');
+  raw.length = 0;
+  engine.length = 0;
+  for (let ms = 0; ms < 20 * 60000; ms += 1500) {
+    raw.push({ t: simFrom + ms, awa: 105 * D2R, aws: 9 * KN, sog: 5.5 * KN });
+    if (ms % 60000 === 0) engine.push({ t: simFrom + ms, v: 'stopped' });
+  }
+  // Les dix premières minutes de la nav simulée sont dans le brut : le plugin
+  // les a vues, à pleine fréquence, et les a jugées. Rien à y refaire.
+  const overlap = await callAsync('POST /api/history/import', {}, { from: simFrom, to: simFrom + 9 * 60000, resolution: 2 });
+  assert.strictEqual(overlap.ok, true, `import chevauchant : ${overlap.why || ''}`);
+  assert.strictEqual(overlap.points, 0, 'une période déjà surveillée en direct ne se ré-importe pas');
+
+  // Et le compte rendu ne dit pas la même chose que « il n'y avait pas de
+  // voile » : c'est le message qu'on a lu à tort la première fois, alors que
+  // les 41 min étaient bien là et simplement déjà vues. Deux verdicts
+  // distincts, parce qu'ils demandent deux réactions opposées.
+  const seen = await callAsync('POST /api/history/check', {}, { from: simFrom, to: simFrom + 9 * 60000 });
+  assert.strictEqual(seen.verdict, 'already_watched', `obtenu ${seen.verdict} — ${seen.why || ''}`);
+  assert.ok(seen.sailingMs > 0, 'la voile trouvée est comptée même quand elle est écartée');
+  assert.strictEqual(seen.availableMs, 0, 'et ce qui reste à exploiter vaut zéro');
+  assert.ok(/watching itself/.test(seen.why), 'le motif est nommé, pas deviné');
+  // La retenue est sélective, pas générale : la fin de la simulation (le bord
+  // au moteur, absent du brut) n'est pas couverte, et là l'import travaille.
+  // C'est exactement ce à quoi il sert — combler ce que le plugin n'a pas vu.
+  const gapFill = await callAsync('POST /api/history/import', {}, { from: simFrom, to: simFrom + 20 * 60000, resolution: 2 });
+  assert.ok(gapFill.points > 0, "les périodes non couvertes, elles, sont bien importées");
+
+  // Et on peut tout jeter, sans toucher aux mesures.
+  const live = call('GET /api/status').disk.liveCount;
+  await callAsync('POST /api/history/clear');
+  const after = call('GET /api/status');
+  assert.strictEqual(after.disk.historyCount, 0);
+  assert.strictEqual(after.disk.liveCount, live, "jeter l'ébauche ne touche pas aux mesures");
+
+  // Un serveur sans History API : on le dit, on ne plante pas.
+  delete fakeApp.getHistoryApi;
+  assert.strictEqual(call('GET /api/history').available, false);
+  const noApi = await callAsync('POST /api/history/check');
+  assert.strictEqual(noApi.verdict, 'error');
+  assert.ok(/History API/.test(noApi.why));
+  return { points: imp.points, queries };
+}
+
+historyTests().then(
+  (hist) => {
+    plugin.stop();
+    assert.deepStrictEqual(netAttempts, [], `rien ne doit sortir pendant les tests, obtenu : ${netAttempts.join(', ')}`);
+    global.fetch = realFetch;
+    Date.now = realNow;
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    console.log(
+      'smoke: ok —',
+      afterMotor,
+      'points,',
+      samples.length,
+      'échantillons bruts,',
+      hist.points,
+      "points d'ébauche en",
+      hist.queries,
+      "requêtes d'historique"
+    );
+  },
+  (e) => {
+    console.error(e);
+    process.exit(1);
+  }
+);

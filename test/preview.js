@@ -35,7 +35,60 @@ function fakeBoat(p) {
   };
   return p in map ? node(map[p]) : null;
 }
-const fakeApp = { getDataDirPath: () => dataDir, setPluginStatus: () => {}, error: console.error, debug: () => {}, getSelfPath: fakeBoat };
+// Un faux magasin d'historique, pour que « Check history data » réponde
+// vraiment dans l'aperçu : deux heures de largue avant-hier, une mesure
+// toutes les 1,5 s (donc des tranches d'une seconde à trous, comme sur un
+// vrai magasin) et l'état moteur une fois par minute.
+const HIST_FROM = Date.now() - 2 * 86400000;
+const HIST_MS = 2 * 3600000;
+const histAt = (t) => {
+  const k = (t - HIST_FROM) / HIST_MS;
+  return {
+    awa: (95 + Math.sin(k * 9) * 25) * D2R,
+    aws: (11 + Math.sin(k * 5) * 2) * KN,
+    sog: (6.2 + Math.sin(k * 5) * 0.8) * KN,
+  };
+};
+const fakeHistoryApi = {
+  getPaths: async () => [
+    'environment.wind.angleApparent',
+    'environment.wind.speedApparent',
+    'navigation.speedOverGround',
+    'propulsion.Engine1.state',
+  ],
+  getContexts: async () => ['vessels.self'],
+  getValues: async (q) => {
+    const from = q.from.epochMilliseconds;
+    const to = q.to.epochMilliseconds;
+    const step = (q.resolution || (to - from) / 1000) * 1000;
+    const values = q.pathSpecs.map((sp) => ({ path: sp.path, method: sp.aggregate }));
+    const data = [];
+    for (let b = from; b < to; b += step) {
+      const has = b + step > HIST_FROM && b < HIST_FROM + HIST_MS;
+      // À 1 s de tranche, une mesure toutes les 1,5 s laisse un trou sur trois.
+      const hole = step <= 1000 && Math.floor((b - HIST_FROM) / 1500) === Math.floor((b - HIST_FROM - step) / 1500);
+      const v = has && !hole ? histAt(Math.max(b, HIST_FROM)) : null;
+      data.push([
+        new Date(b).toISOString(),
+        ...values.map((c) => {
+          if (c.path === 'propulsion.Engine1.state') return has && Math.floor(b / 60000) !== Math.floor((b - step) / 60000) ? 'stopped' : null;
+          if (!v) return null;
+          return c.path === 'environment.wind.angleApparent' ? v.awa : c.path === 'environment.wind.speedApparent' ? v.aws : v.sog;
+        }),
+      ]);
+    }
+    return { context: 'vessels.self', range: { from: q.from.toString(), to: q.to.toString() }, values, data };
+  },
+};
+
+const fakeApp = {
+  getDataDirPath: () => dataDir,
+  setPluginStatus: () => {},
+  error: console.error,
+  debug: () => {},
+  getSelfPath: fakeBoat,
+  getHistoryApi: async () => fakeHistoryApi,
+};
 const realSetInterval = global.setInterval;
 let captured = null;
 global.setInterval = (fn) => {

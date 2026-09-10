@@ -30,6 +30,7 @@ const sailchange = require('./lib/sailchange');
 const { createShare } = require('./lib/share');
 const { createSupport } = require('./lib/support');
 const { createUsage, pingEndpointFrom } = require('./lib/usage');
+const history = require('./lib/history');
 
 // Les liens du pied de page et du bandeau « un coup de pouce ». En dur, et
 // pas dans la configuration : ce n'est pas un réglage du bateau, et un lien de
@@ -176,7 +177,7 @@ module.exports = function (app) {
         type: 'boolean',
         title: 'Contribute my polar to the shared pool',
         description:
-          'This plugin is free and stays free. In exchange it sends the polar it has learned to a shared pool, on its own, every few hundred new points — nothing to click, nothing to remember. Only the polar, the boat model and the name above leave the boat: no position, no track, no raw log. The exact payload is readable at any time in the webapp, under Share. Turning this off leaves the plugin fully working; it just stops the pool from growing.',
+          'This plugin is free and stays free. In exchange it sends the polar it has learned to a shared pool, on its own, every few hundred new points — nothing to click, nothing to remember. Only the polar, the boat model and the name above leave the boat: no position, no track, no raw log. If you have drafted a polar from the server history store, those points count in the shared polar too, and the payload says how many of them there are. The exact payload is readable at any time in the webapp, under Share. Turning this off leaves the plugin fully working; it just stops the pool from growing.',
         default: true,
       },
       shareEveryPoints: {
@@ -350,6 +351,20 @@ module.exports = function (app) {
             description:
               'Default 8. With a DST810, use 2.0 (its attitude sensor reads smaller, cleaner pitch swings than a typical IMU).',
             default: 8,
+          },
+          historyResolutionS: {
+            type: 'number',
+            title: 'Force the history time resolution (s, 0 = measured)',
+            description:
+              'Leave at 0 and autopolar measures it: it tries 1, 2, 3, 5 then 10 s buckets on a sample of the range and keeps the finest one whose buckets come back full. Set a value only to override that — too fine and the buckets have holes that break every window, too coarse and a whole window rests on two readings.',
+            default: 0,
+          },
+          historyProvider: {
+            type: 'string',
+            title: 'History API provider to draft a polar from',
+            description:
+              'Leave empty to use whichever provider the server has set as default. Name a plugin id (for instance signalk-history-sqlite) if several are installed and you want to be sure which store is read. Nothing is read until you press "Check history data" in the webapp — this option only decides where that button looks.',
+            default: '',
           },
         },
       },
@@ -837,10 +852,82 @@ module.exports = function (app) {
       excluded: store.excluded(),
       overrides: store.overrides().cells,
       excludeDeclared: q.shared === '1',
+      // Le partage force l'inclusion : ce qu'on reverse doit être exactement
+      // ce que la carte Share affiche, quel que soit le réglage d'affichage.
+      excludeHistory: q.shared === '1' ? false : q.history === '0',
       sail: q.main || q.head ? { main: q.main || '', head: q.head || '' } : null,
       sailRanges: store.overrides().sailRanges,
       smooth: q.smooth !== '0',
     };
+  }
+
+  // ── Découpage en fenêtres ──────────────────────────────────────────────────
+  //
+  // Le cœur commun au rejeu du brut et à l'ébauche depuis l'historique : une
+  // suite d'instantanés entre, des points stables sortent. Un seul
+  // exemplaire, volontairement. Deux découpages écrits séparément
+  // finiraient par ne plus juger pareil, et une case de la polaire ne
+  // voudrait plus dire la même chose selon d'où elle vient.
+  //
+  // `hooks` : gapMs (au-delà, la continuité est rompue), sailTag, accept
+  // (dernier veto avant de retenir la fenêtre), extra (champs à poser sur le
+  // point), reject (comptage des motifs).
+  function windowRuns(snaps, o, hooks = {}) {
+    const gapMs = hooks.gapMs || 3000;
+    const out = [];
+    let win = [];
+    let last = 0;
+    const nope = (reason) => hooks.reject && hooks.reject(reason);
+    for (const snap of snaps) {
+      // Trou dans le temps = rupture de continuité, la fenêtre ne vaut plus.
+      if (last && snap.ts - last > gapMs) win = [];
+      last = snap.ts;
+
+      const v = classify(snap, o);
+      if (!v.usable) {
+        win = [];
+        nope(v.reason);
+        continue;
+      }
+      const sailTag = hooks.sailTag ? hooks.sailTag(snap) : '|';
+      win.push(Object.assign({}, snap, { engineSource: v.engineSource, sailTag }));
+      // La fenêtre doit être homogène : un changement de voilure en cours de
+      // route décrit un autre bateau.
+      if (win.length > 1 && win[0].sailTag !== sailTag) win = [win[win.length - 1]];
+      if (win.length > o.windowS) win = win.slice(-o.windowS);
+
+      const w = assessWindow(win, o);
+      if (!w.stable) {
+        if (w.reason !== 'accumulating') nope(w.reason);
+        // La fenêtre GLISSE au lieu d'être vidée : une seconde qui sort des
+        // clous ne doit pas coûter les précédentes. Seule une manœuvre
+        // pollue la fenêtre entière — un virement ne « sort » pas d'elle, il
+        // la coupe en deux régimes différents.
+        if (w.reason === 'tack_change' || w.reason === 'turning') win = [];
+        continue;
+      }
+      if (hooks.accept && !hooks.accept(win, o)) {
+        nope('window_spread');
+        continue;
+      }
+      const [main, head] = sailTag.split('|');
+      out.push(
+        condense(
+          win,
+          Object.assign(
+            {
+              id: win[win.length - 1].ts,
+              engineSource: win[win.length - 1].engineSource,
+              sail: { main: main || '', head: head || '' },
+              metrics: w.metrics,
+            },
+            hooks.extra ? hooks.extra(win) : null
+          )
+        )
+      );
+      win = [];
+    }
+    return out;
   }
 
   // ── Rejeu du brut ──────────────────────────────────────────────────────────
@@ -848,11 +935,9 @@ module.exports = function (app) {
   // C'est ce qui rend les réglages du filtre réversibles.
   function rebuild(overrideOpts) {
     const o = Object.assign({}, opts, overrideOpts || {});
-    const out = [];
-    let win = [];
-    let last = 0;
+    const snaps = [];
     store.eachSample((s) => {
-      const snap = {
+      snaps.push({
         ts: s.t,
         sog: s.sog,
         stw: s.stw,
@@ -866,44 +951,258 @@ module.exports = function (app) {
         pitch: s.pit,
         rot: s.rot,
         navState: null,
-        rpm: null,
-        engineState: null,
-        rpmEverSeen: true,
         // Le brut n'a été archivé que si le moteur était déjà jugé à l'arrêt :
         // on n'a donc pas à re-statuer là-dessus, seulement à re-filtrer.
-        fresh: { sog: s.sog != null, stw: s.stw != null, awa: s.awa != null, aws: s.aws != null, rpm: false, engineState: false },
-      };
-      const engineOk = { usable: true, engineSource: s.eng };
-      // Trou dans le temps = rupture de continuité, la fenêtre ne vaut plus.
-      if (last && s.t - last > 3000) win = [];
-      last = s.t;
-
-      const v = classify(Object.assign({}, snap, { rpm: 0, fresh: Object.assign({}, snap.fresh, { rpm: true }) }), o);
-      if (!v.usable) {
-        win = [];
-        return;
-      }
-      const sailTag = s.sail || '|';
-      win.push(Object.assign({}, snap, { engineSource: engineOk.engineSource, sailTag }));
-      if (win.length > 1 && win[0].sailTag !== sailTag) win = [win[win.length - 1]];
-      if (win.length > o.windowS) win = win.slice(-o.windowS);
-      const w = assessWindow(win, o);
-      if (!w.stable) {
-        if (w.reason === 'tack_change' || w.reason === 'turning') win = [];
-        return;
-      }
-      const [main, head] = sailTag.split('|');
-      out.push(
-        condense(win, {
-          id: win[win.length - 1].ts,
-          engineSource: s.eng,
-          sail: { main: main || '', head: head || '' },
-          metrics: w.metrics,
-        })
-      );
-      win = [];
+        rpm: 0,
+        engineState: null,
+        rpmEverSeen: true,
+        eng: s.eng,
+        sail: s.sail,
+        fresh: {
+          sog: s.sog != null,
+          stw: s.stw != null,
+          awa: s.awa != null,
+          aws: s.aws != null,
+          rpm: true,
+          engineState: false,
+        },
+      });
     });
+    return windowRuns(snaps, o, {
+      gapMs: 3000,
+      sailTag: (snap) => snap.sail || '|',
+      // On restitue l'origine du verdict moteur telle qu'elle était le jour
+      // de la collecte : sans ça un point « déclaré » redeviendrait un point
+      // mesuré au rejeu, et sortirait de la retenue qui l'écarte du partage.
+      extra: (win) => ({ engineSource: win[win.length - 1].eng }),
+    });
+  }
+
+  // ── Ébauche depuis le History API ──────────────────────────────────────────
+  //
+  // Voir l'en-tête de lib/history.js pour le raisonnement. Ici, le côté
+  // SignalK : trouver le fournisseur, mesurer ce qu'il contient, et fabriquer
+  // des points avec le même filtre que la collecte en direct.
+  async function historyApi() {
+    if (!app.getHistoryApi) throw new Error('this SignalK server has no History API');
+    return opts.historyProvider ? app.getHistoryApi(opts.historyProvider) : app.getHistoryApi();
+  }
+
+  // Les périodes qu'autopolar a observées lui-même, à pleine fréquence. Un
+  // trou de plus d'une fenêtre sépare deux périodes : en dessous, c'est la
+  // même veille et on ne veut pas la trouer artificiellement.
+  function liveCoverage() {
+    if (opts.rawSamples) {
+      const cov = store.coverage(Math.max(60000, opts.windowS * 1000), history.toIntervals);
+      return { intervals: cov.intervals, from: 'raw log' };
+    }
+    // Sans brut archivé, on n'a que les points retenus. Moins précis (les
+    // périodes refusées par le filtre n'y sont pas), donc on le dit.
+    const stamps = store.liveRuns().map((r) => r.ts);
+    return { intervals: history.toIntervals(stamps, Math.max(60000, opts.windowS * 1000)), from: 'recorded points' };
+  }
+
+  // Ce que l'historique contient et ce qu'il donnerait — sans rien écrire.
+  // C'est le bouton « Check history data » : il doit pouvoir être pressé
+  // vingt fois sans conséquence.
+  async function checkHistory(req = {}) {
+    const api = await historyApi();
+    const now = Date.now();
+    const paths = await api.getPaths({ from: history.instant(now - 5 * 365 * 86400000), to: history.instant(now) });
+    const have = new Set(paths || []);
+    const engines = (paths || []).filter((p) => history.ENGINE_RE.test(p));
+    const known = history.CANDIDATES.filter((c) => have.has(c.path));
+    const missingRequired = history.CANDIDATES.filter((c) => c.role === 'required' && !have.has(c.path));
+
+    const out = {
+      provider: opts.historyProvider || 'server default',
+      paths: paths || [],
+      have: known.map((c) => ({ key: c.key, path: c.path, label: c.label, role: c.role })),
+      missing: history.CANDIDATES.filter((c) => !have.has(c.path)).map((c) => ({ key: c.key, label: c.label, role: c.role })),
+      engines,
+      ok: false,
+    };
+
+    if (missingRequired.length) {
+      out.verdict = 'missing_paths';
+      out.why = `no ${missingRequired.map((c) => c.label).join(', ')}`;
+      out.fix = 'add those paths to the history plugin allow-list, then come back after a sail';
+      return out;
+    }
+    if (!engines.length) {
+      // Pas de question de confiance ici : une déclaration « je navigue à la
+      // voile » vaut pour maintenant et expire, elle ne peut pas se poser
+      // rétroactivement sur trois mois. Sans donnée moteur archivée, on ne
+      // peut pas distinguer une nav d'un trajet au moteur, donc on renonce.
+      out.verdict = 'no_engine_data';
+      out.why = 'no propulsion path is archived';
+      out.fix = 'add propulsion.<engine>.state (or .revolutions) to the history plugin allow-list — without it, nothing tells a sail from a motor leg after the fact';
+      return out;
+    }
+
+    // Ce que le magasin contient, et où il est le plus fourni : c'est là
+    // qu'on mesure la finesse réellement disponible (voir lib/history.js).
+    const sv = await history.survey((q) => api.getValues(q));
+    if (!sv.span) {
+      out.verdict = sv.reason === 'missing_paths' ? 'missing_paths' : 'empty';
+      out.why = 'the store answers, but has nothing archived for these paths';
+      return out;
+    }
+    const from = req.from ? Number(req.from) : sv.span.from;
+    const to = req.to ? Number(req.to) : sv.span.to;
+    out.span = sv.span;
+    out.range = { from, to };
+    out.filledHours = sv.filledHours;
+    out.resolutions = sv.tried;
+    out.resolution = opts.historyResolutionS || sv.resolution;
+    if (!out.resolution) {
+      out.verdict = 'too_sparse';
+      out.why = 'no time resolution gives full buckets — the store is too sparse for these paths';
+      return out;
+    }
+    const windowN = Math.round(opts.windowS / out.resolution);
+    out.windowSamples = windowN;
+    if (windowN < history.MIN_WINDOW_SAMPLES) {
+      out.verdict = 'too_coarse';
+      out.why = `at ${out.resolution} s per bucket a ${opts.windowS} s window would rest on ${windowN} reading(s)`;
+      out.fix = 'autopolar cannot tell a steady leg from a manoeuvre on that little — store the paths at a finer resolution';
+      return out;
+    }
+
+    // On fabrique vraiment les points, on ne les écrit simplement pas. Un
+    // décompte estimé serait un chiffre invérifiable : celui-ci est le vrai.
+    const built = await buildHistoryRuns(api, from, to, out.resolution);
+    Object.assign(out, {
+      holeRate: sv.holeRate != null ? sv.holeRate : null,
+      ok: built.runs.length > 0,
+      verdict: built.runs.length
+        ? 'ok'
+        : built.sailingMs === 0
+        ? 'no_sailing'
+        : built.availableMs === 0
+        ? 'already_watched'
+        : 'no_steady_stretch',
+      points: built.runs.length,
+      sailingMs: built.sailingMs,
+      alreadyWatchedMs: built.alreadyWatchedMs,
+      availableMs: built.availableMs,
+      windows: built.windows,
+      rejected: built.rejected,
+      coverageFrom: built.coverageFrom,
+      engineCadenceMs: built.engineCadenceMs,
+      bands: built.bands,
+      twaFrom: built.twaFrom,
+      twaTo: built.twaTo,
+      bonus: known.filter((c) => c.role === 'bonus').map((c) => c.label),
+    });
+    // Trois raisons bien différentes de ne rien avoir à importer, et trois
+    // réactions différentes. Les confondre sous un seul message enverrait
+    // chercher un problème là où il n'y en a pas.
+    if (out.verdict === 'no_sailing') {
+      out.why = 'every reading is at anchor, under engine, or without wind';
+      out.fix = null;
+    } else if (out.verdict === 'already_watched') {
+      out.why = `the plugin was watching itself through all ${Math.round(built.sailingMs / 60000)} min of it, at full rate`;
+      out.fix = 'nothing to fix — ask for an earlier range, or a passage the plugin missed';
+    } else if (out.verdict === 'no_steady_stretch') {
+      out.why = `${Math.round(built.availableMs / 60000)} min of sailing left to draft, but no stretch steady enough to make a point`;
+      out.fix = 'the filter thresholds are in the plugin settings; nothing here has been written';
+    }
     return out;
+  }
+
+  // Fabrique les points d'une plage. Utilisé par la vérification comme par
+  // l'import : le nombre annoncé par le bouton est celui qui sera écrit.
+  async function buildHistoryRuns(api, from, to, resolution) {
+    const keys = [];
+    const paths = await api.getPaths({ from: history.instant(from), to: history.instant(to) });
+    const have = new Set(paths || []);
+    for (const c of history.CANDIDATES) if (have.has(c.path)) keys.push(c.key);
+    const engines = (paths || []).filter((p) => history.ENGINE_RE.test(p));
+    // La dispersion intérieure d'une tranche n'est demandée que quand la
+    // moyenne en efface vraiment (au-delà de 5 s), pour ne pas tripler les
+    // colonnes sans raison.
+    const specs = history.planSpecs(keys, engines, resolution >= 5);
+
+    const cov = liveCoverage();
+    const rejected = {};
+    // On découpe la plage : une seule requête sur trois mois de tranches de
+    // 2 s ferait plusieurs millions de lignes en mémoire, côté serveur comme
+    // ici. Corollaire assumé : une fenêtre à cheval sur une frontière de
+    // morceau est perdue — un point toutes les six heures, et les frontières
+    // tombent presque toujours au mouillage.
+    const chunkMs = 6 * 3600000;
+    const runs = [];
+    let sailingMs = 0;
+    let alreadyWatchedMs = 0;
+    let windows = 0;
+    let engineCadenceMs = null;
+
+    for (let a = from; a < to; a += chunkMs) {
+      const b = Math.min(to, a + chunkMs);
+      // On interroge même un morceau intégralement déjà surveillé. Sauter la
+      // requête irait plus vite, mais on ne saurait plus dire COMBIEN de
+      // voile s'y trouvait — et « rien à importer parce que tout est déjà
+      // vu » ne se distinguerait plus de « rien à importer parce qu'il n'y a
+      // pas de voile ». Deux verdicts opposés qui demandent deux réactions
+      // opposées : la différence vaut la requête.
+      const resp = await api.getValues(history.toRequest(specs, a, b, resolution));
+      const { cols, rows } = history.readResponse(resp, specs);
+      const { snaps, engine } = history.toSnapshots(rows, cols);
+      if (engine.cadence != null) engineCadenceMs = engine.cadence;
+
+      const o = Object.assign({}, opts, { windowS: Math.round(opts.windowS / resolution) });
+      const kept = [];
+      for (const snap of snaps) {
+        // Le temps sous voile se compte sur TOUT ce que le magasin contient,
+        // y compris ce qu'on va écarter juste après : c'est ce qui permet de
+        // dire « 41 min trouvées, 41 min déjà vues » au lieu du seul zéro.
+        const sailing = classify(snap, o).usable;
+        if (sailing) sailingMs += resolution * 1000;
+        // Une seconde déjà observée en direct n'est jamais réécrite depuis
+        // l'historique : le filtre l'a déjà jugée sur des données à pleine
+        // fréquence, et une version lissée n'a pas à annuler ce verdict.
+        if (history.inIntervals(cov.intervals, snap.ts)) {
+          if (sailing) alreadyWatchedMs += resolution * 1000;
+          continue;
+        }
+        kept.push(snap);
+      }
+      const built = windowRuns(kept, o, {
+        gapMs: resolution * 1500,
+        accept: history.windowSpreadOk,
+        reject: (r) => (rejected[r] = (rejected[r] || 0) + 1),
+        extra: () => ({ origin: 'history', res: resolution, engineSource: 'history' }),
+      });
+      windows += built.length;
+      for (const r of built) runs.push(r);
+    }
+
+    const bands = new Set();
+    let twaFrom = null;
+    let twaTo = null;
+    for (const r of runs) {
+      const bin = polarLib.findWindBin(polarLib.windBinEdges(opts.twsBins), r.tws);
+      if (bin) bands.add(bin.ws);
+      const a = Math.abs(r.twa);
+      if (twaFrom == null || a < twaFrom) twaFrom = a;
+      if (twaTo == null || a > twaTo) twaTo = a;
+    }
+    return {
+      runs,
+      sailingMs,
+      alreadyWatchedMs,
+      // Ce qui restait vraiment à exploiter, après retrait de ce que le
+      // plugin avait déjà vu lui-même.
+      availableMs: Math.max(0, sailingMs - alreadyWatchedMs),
+      windows,
+      rejected,
+      engineCadenceMs,
+      coverageFrom: cov.from,
+      bands: [...bands].sort((x, y) => x - y),
+      twaFrom: twaFrom != null ? Math.round(twaFrom) : null,
+      twaTo: twaTo != null ? Math.round(twaTo) : null,
+    };
   }
 
   // ── Ce qui part dans le fonds commun ───────────────────────────────────────
@@ -920,6 +1219,10 @@ module.exports = function (app) {
     const polar = polarLib.buildPolar(store.runs(), polarOpts({ shared: '1', speed: 'sog', wind: 'true', stat: 'median' }));
     const runs = store.runs();
     const declared = runs.filter((r) => r.engineSource === 'declared').length;
+    // Les points d'ébauche partent avec le reste, et leur nombre part avec
+    // eux. Le collecteur peut les pondérer ou les écarter ; ce qui compte est
+    // qu'on ne les fasse pas passer pour des mesures prises en direct.
+    const fromHistory = runs.filter((r) => r.origin === 'history').length;
 
     // La taille et le gréement, si le serveur les connaît : c'est ce qui
     // permet de comparer deux bateaux du même modèle.
@@ -952,6 +1255,7 @@ module.exports = function (app) {
       points: polar.used,
       totalPoints: runs.length,
       declaredExcluded: declared,
+      historyPoints: fromHistory,
       cells,
       bands,
       first: runs.length ? runs[0].ts : null,
@@ -1056,6 +1360,7 @@ module.exports = function (app) {
         staleMs: opts.staleMs,
         engineStaleMs: opts.engineStaleMs,
         disk: d,
+        historyApi: Boolean(app.getHistoryApi),
         excluded: store.excluded().size,
         overrides: Object.keys(store.overrides().cells).length,
         quality: qualitySummary(),
@@ -1354,6 +1659,60 @@ module.exports = function (app) {
       res.json({ ok: true });
     });
 
+    // ── Ébauche depuis l'historique du serveur ─────────────────────────────
+    //
+    // Trois routes et un principe : rien ne s'écrit sans un second clic. La
+    // vérification fabrique vraiment les points pour pouvoir en annoncer le
+    // nombre exact, puis les jette.
+    router.get('/api/history', (req, res) => {
+      const meta = store.historyMeta();
+      res.json({
+        available: Boolean(app.getHistoryApi),
+        provider: opts.historyProvider || null,
+        points: store.diskInfo().historyCount,
+        imports: meta.imports,
+        coverage: meta.coverage ? { intervals: meta.coverage.intervals.length, samples: meta.coverage.samples } : null,
+      });
+    });
+
+    router.post('/api/history/check', async (req, res) => {
+      try {
+        res.json(await checkHistory(body(req)));
+      } catch (e) {
+        res.json({ ok: false, verdict: 'error', why: String((e && e.message) || e) });
+      }
+    });
+
+    router.post('/api/history/import', async (req, res) => {
+      const b = body(req);
+      try {
+        const api = await historyApi();
+        // Un repérage complet ne sert qu'à trouver la plage et la finesse. Si
+        // l'appelant a déjà tranché les deux, on ne le refait pas.
+        const known = b.from && b.to && (b.resolution || opts.historyResolutionS);
+        const sv = known ? {} : await history.survey((q) => api.getValues(q));
+        if (!known && !sv.span) return res.json({ ok: false, why: 'the history store holds nothing' });
+        const from = b.from ? Number(b.from) : sv.span.from;
+        const to = b.to ? Number(b.to) : sv.span.to;
+        const resolution = Number(b.resolution) || opts.historyResolutionS || sv.resolution;
+        if (!resolution) return res.json({ ok: false, why: 'no usable time resolution' });
+        const built = await buildHistoryRuns(api, from, to, resolution);
+        const total = store.replaceHistory(built.runs, { from, to }, { resolution, sailingMs: built.sailingMs });
+        qualityCache = { key: null, value: null };
+        app.debug(`[polar] history import: ${built.runs.length} draft point(s) over ${new Date(from).toISOString()}..${new Date(to).toISOString()}`);
+        res.json({ ok: true, points: built.runs.length, total, from, to, resolution, bands: built.bands });
+      } catch (e) {
+        app.error(`[polar] history import: ${(e && e.message) || e}`);
+        res.json({ ok: false, why: String((e && e.message) || e) });
+      }
+    });
+
+    router.post('/api/history/clear', (req, res) => {
+      store.reset('history');
+      qualityCache = { key: null, value: null };
+      res.json({ ok: true, points: 0 });
+    });
+
     // ── Partage ────────────────────────────────────────────────────────────
     // Ce plugin est gratuit et le restera ; en échange, la polaire de chaque
     // bateau retourne au fonds commun. L'envoi est automatique (voir
@@ -1640,6 +1999,8 @@ module.exports = function (app) {
         usageStats: true,
         publishPerformance: false,
         supportPrompt: true,
+        historyProvider: '',
+        historyResolutionS: 0,
       },
       flatOptions
     );

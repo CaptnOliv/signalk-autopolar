@@ -382,6 +382,10 @@ code { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color
   font-size: 12px; color: var(--ink-2);
 }
 .hint.warn { color: var(--warning); }
+/* Le compte rendu de l'historique est écrit en lignes : une par question
+   (ce qui a été lu, ce qui manque, ce que ça donnerait). On garde les sauts
+   de ligne, et une chasse fixe pour que les chiffres s'alignent. */
+#histPanel { white-space: pre-line; font-family: var(--mono, ui-monospace, monospace); line-height: 1.55; }
 .msg.warn { color: var(--warning); }
 
 /* ── Un coup de pouce ───────────────────────────────────────────────────────

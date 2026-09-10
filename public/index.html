@@ -124,6 +124,16 @@
             <button data-v="on">on</button><button data-v="off">off</button>
           </div>
         </div>
+        <!-- Les points reconstruits depuis l'historique du serveur. Le
+             filtre n'existe que parce qu'on doit pouvoir regarder la polaire
+             des seules mesures prises en direct, sans rien effacer. Le
+             groupe reste caché tant qu'il n'y a pas d'ébauche. -->
+        <div class="group" id="draftGroup" hidden>
+          <label>Draft points</label>
+          <div class="seg" data-key="history" title="Points drafted from the server history store">
+            <button data-v="on">included</button><button data-v="off">hidden</button>
+          </div>
+        </div>
         <!-- Où on se situe en ce moment sur la courbe. C'est le réglage qu'on
              veut allumé en nav et éteint quand on analyse au mouillage. -->
         <div class="group">
@@ -214,6 +224,15 @@
         <button class="act" id="btnSendPM">Send to Polar Management</button>
         <span class="msg" id="pmMsg"></span>
       </div>
+      <!-- Ébauche depuis le History API du serveur. Deux clics, jamais un :
+           « check » ne fait que mesurer et annoncer, « import » écrit. -->
+      <div class="row-actions" id="histRow" hidden>
+        <button class="act" id="btnHistCheck">Check history data</button>
+        <button class="act" id="btnHistImport" hidden>Draft the polar</button>
+        <button class="act danger" id="btnHistClear" hidden>Drop draft points</button>
+        <span class="msg" id="histMsg"></span>
+      </div>
+      <div class="hint" id="histPanel" hidden></div>
       <div class="row-actions">
         <button class="act" id="btnRebuildDry">Dry-run a replay</button>
         <button class="act" id="btnRebuild">Replay the raw log</button>

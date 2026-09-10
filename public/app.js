@@ -32,6 +32,9 @@ const ui = {
   // Filtre de voilure : null = tout confondu. C'est ce qui donne son sens au
   // marquage — sans lui, l'étiquette posée en nav ne se relit jamais.
   sailFilter: null, // { main, head }
+  // Points reconstruits depuis l'historique du serveur : inclus par défaut,
+  // sinon l'ébauche qu'on vient d'importer n'apparaîtrait nulle part.
+  history: 'on',
 };
 
 const MAIN_SAILS = [['', '—'], ['full', 'full'], ['r1', '1 reef'], ['r2', '2 reefs'], ['r3', '3 reefs']];
@@ -316,7 +319,10 @@ function syncSail(s) {
 
 // ── Requêtes ────────────────────────────────────────────────────────────────
 function query(over) {
-  const q = Object.assign({ speed: ui.speed, wind: ui.wind, stat: ui.stat, min: '1', smooth: ui.smooth === 'on' ? '1' : '0' }, over || {});
+  const q = Object.assign(
+    { speed: ui.speed, wind: ui.wind, stat: ui.stat, min: '1', smooth: ui.smooth === 'on' ? '1' : '0', history: ui.history === 'on' ? '1' : '0' },
+    over || {}
+  );
   if (ui.tack !== 'split' && !(over && over.tack)) q.tack = 'merged';
   if (ui.sailFilter) {
     if (ui.sailFilter.main) q.main = ui.sailFilter.main;
@@ -1009,7 +1015,9 @@ async function inspect(ws, twa) {
       (p) => `<div class="row" data-id="${p.id}">
         <input type="checkbox" data-id="${p.id}" title="Untick to exclude this point" checked />
         <span class="meta">${new Date(p.ts).toLocaleString(undefined, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-          · ${fmt(p.tws, 1)} kn / ${fmt(p.twa, 0)}° · ${sailLabel(p.sail)}${p.engineSource === 'autostate' ? ' · engine via autostate' : ''}</span>
+          · ${fmt(p.tws, 1)} kn / ${fmt(p.twa, 0)}° · ${sailLabel(p.sail)}${p.engineSource === 'autostate' ? ' · engine via autostate' : ''}${
+        p.origin === 'history' ? ` · drafted from history (${p.res} s)` : ''
+      }</span>
         <span class="sp">${fmt(p.speed, 2)} kn</span>
       </div>`
     )
@@ -1587,6 +1595,108 @@ async function refreshSupport() {
 }
 
 // ── Contrôles ───────────────────────────────────────────────────────────────
+// ── Ébauche depuis l'historique du serveur ──────────────────────────────────
+//
+// Deux temps, et c'est tout l'intérêt : « check » mesure et annonce, sans
+// rien écrire ; « draft » écrit ce qui vient d'être annoncé. Le décompte
+// affiché n'est pas une estimation — le serveur a vraiment fabriqué les
+// points pour pouvoir le dire.
+const HIST_LABEL = {
+  missing_paths: 'Not enough is stored',
+  no_engine_data: 'Cannot tell sailing from motoring',
+  empty: 'Nothing in the history store',
+  too_sparse: 'History store is too sparse',
+  too_coarse: 'History resolution is too coarse',
+  no_sailing: 'No sailing in the store',
+  already_watched: 'Nothing left to draft',
+  no_steady_stretch: 'No steady stretch to draft from',
+  error: 'Could not read the history store',
+};
+
+const mins = (ms) =>
+  ms == null ? '?' : !ms ? 'none' : ms < 90000 ? `${Math.round(ms / 1000)} s` : ms < 5400000 ? `${Math.round(ms / 60000)} min` : `${(ms / 3600000).toFixed(1)} h`;
+
+function renderHistory(d) {
+  const panel = $('#histPanel');
+  const lines = [];
+  const head = [`${d.provider || 'server default'}`];
+  if (d.resolution) head.push(`${d.resolution} s buckets`);
+  if (d.holeRate != null) head.push(`${(d.holeRate * 100).toFixed(1)}% holes`);
+  if (d.windowSamples) head.push(`${d.windowSamples} readings per window`);
+  lines.push(head.join(' · '));
+  if (d.range) lines.push(`${fmtTime(d.range.from, true)} → ${fmtTime(d.range.to, true)}`);
+
+  if (d.have && d.have.length) lines.push(`Read: ${d.have.map((h) => h.label).join(', ')}${d.engines && d.engines.length ? `, ${d.engines.join(', ')}` : ''}`);
+  const gone = (d.missing || []).filter((m) => m.role === 'bonus');
+  if (d.ok && gone.length) lines.push(`Not stored: ${gone.map((m) => m.label).join(', ')}`);
+
+  // Le temps sous voile s'affiche dès qu'il a été mesuré, y compris quand il
+  // n'y a rien à importer : c'est là qu'il explique pourquoi. Sans cette
+  // ligne, « rien à importer » et « rien trouvé » se ressemblent.
+  if (d.sailingMs != null) {
+    const left = d.availableMs != null ? ` · left to draft: ${mins(d.availableMs)}` : '';
+    lines.push(`Sailing found: ${mins(d.sailingMs)} · already watched live: ${mins(d.alreadyWatchedMs)}${left}`);
+  }
+  if (d.ok) {
+    const bands = d.bands && d.bands.length ? `, wind bands ${d.bands.join(', ')} kn` : '';
+    const twa = d.twaFrom != null ? `, TWA ${d.twaFrom}–${d.twaTo}°` : '';
+    lines.push(`→ ${d.points} draft point${d.points === 1 ? '' : 's'}${bands}${twa}`);
+  } else {
+    lines.push(`✗ ${HIST_LABEL[d.verdict] || d.verdict || 'unavailable'}${d.why ? ` — ${d.why}` : ''}`);
+    if (d.fix) lines.push(`→ ${d.fix}`);
+  }
+  panel.textContent = lines.join('\n');
+  panel.hidden = false;
+  $('#btnHistImport').hidden = !d.ok;
+  if (d.ok) $('#btnHistImport').textContent = `Draft the polar (${d.points} points)`;
+}
+
+function bindHistory() {
+  const row = $('#histRow');
+  if (!row) return;
+  const msg = (t) => ($('#histMsg').textContent = t);
+  fetch(`${API}/api/history`)
+    .then((r) => r.json())
+    .then((h) => {
+      if (!h || h.available === undefined) return;
+      row.hidden = false;
+      if (!h.available) {
+        $('#btnHistCheck').disabled = true;
+        msg('this server has no History API');
+        return;
+      }
+      $('#btnHistClear').hidden = !h.points;
+      if (h.points) msg(`${h.points} draft point(s) imported`);
+    })
+    .catch(() => {});
+
+  $('#btnHistCheck').onclick = async () => {
+    msg('reading the history store…');
+    const d = await post('/api/history/check', {});
+    msg('');
+    renderHistory(d);
+  };
+  $('#btnHistImport').onclick = async () => {
+    msg('drafting…');
+    const r = await post('/api/history/import', {});
+    if (!r.ok) return msg(`✗ ${r.why}`);
+    msg(`${r.points} draft point(s) written`);
+    $('#btnHistClear').hidden = !r.total;
+    refreshPolar();
+    refreshStatus();
+  };
+  $('#btnHistClear').onclick = async () => {
+    if (!confirm('Drop every draft point? Only the points drafted from the history store are removed — the measurements the plugin took itself are untouched.')) return;
+    await post('/api/history/clear', {});
+    msg('draft points dropped');
+    $('#btnHistClear').hidden = true;
+    $('#btnHistImport').hidden = true;
+    $('#histPanel').hidden = true;
+    refreshPolar();
+    refreshStatus();
+  };
+}
+
 function bindControls() {
   for (const seg of document.querySelectorAll('#controls .seg')) {
     const key = seg.dataset.key;
@@ -1637,6 +1747,8 @@ function bindActions() {
     })
     .catch(() => {});
 
+  bindHistory();
+
   const say = (t) => ($('#maintMsg').textContent = t);
   $('#btnRebuildDry').onclick = async () => {
     say('replaying…');
@@ -1667,9 +1779,14 @@ function bindActions() {
 async function refreshStatus() {
   const s = await (await fetch(`${API}/api/status`)).json();
   const mb = (s.disk.sampleBytes / 1048576).toFixed(1);
+  const draft = s.disk.historyCount || 0;
   $('#diskHint').textContent =
-    `${s.disk.runCount} points · raw log ${mb} MB${s.disk.samplesFull ? ' (FULL)' : ''} · ${s.excluded} point(s) excluded · ${s.overrides} cell(s) overridden` +
+    `${s.disk.runCount} points${draft ? ` (${draft} drafted from history)` : ''} · raw log ${mb} MB${s.disk.samplesFull ? ' (FULL)' : ''} · ${s.excluded} point(s) excluded · ${s.overrides} cell(s) overridden` +
     (s.disk.writeErrors ? ` · ⚠ ${s.disk.writeErrors} failed write(s): ${s.disk.lastWriteError}` : '');
+  // Le filtre n'apparaît que s'il a quelque chose à filtrer : un segment
+  // « draft points » sur un bateau qui n'en a aucun ne fait que du bruit.
+  const dg = $('#draftGroup');
+  if (dg) dg.hidden = !draft;
   $('#headSub').textContent =
     (s.first ? `${s.disk.runCount} points since ${new Date(s.first).toLocaleDateString()}` : 'no points yet') +
     ` · v${s.version || '?'}`;
