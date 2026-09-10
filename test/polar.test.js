@@ -130,6 +130,37 @@ assert.strictEqual(p.validateCanonicalShape(canon), null, 'le document canonique
 // Une polaire sans aucune case mesurée ne s’envoie pas.
 assert.throws(() => p.toCanonical(p.buildPolar([], { twsBins: [10], twaStep: 10 })), /polaire vide/);
 
+// Une bande de vent qui n'a que du portant (ou que du près) est écartée : le
+// consommateur (polar-math → signalk-polar-management) déréférence une cible
+// VMG à null pour le bord manquant.
+{
+  const oneSided = [
+    { id: 1, sog: 6.0, twa: 45, tws: 8 }, // 8 nd : près + portant → gardée
+    { id: 2, sog: 5.5, twa: 135, tws: 8 },
+    { id: 3, sog: 7.5, twa: 130, tws: 20 }, // 20 nd : que du portant → écartée
+    { id: 4, sog: 7.6, twa: 140, tws: 20 },
+  ];
+  const o = { twsBins: [8, 20], twaStep: 5, minSamples: 1, smooth: false };
+  const c = p.toCanonical(p.buildPolar(oneSided, o), { name: 'x' });
+  assert.strictEqual(c.axes.tws.length, 1, 'seule la bande avec les deux bords survit');
+  assert.ok(Math.abs(c.axes.tws[0] - 8 / 1.94384) < 1e-6, "c'est bien la bande 8 nd");
+}
+
+// Rien que du portant partout → inexploitable, message distinct de « vide ».
+assert.throws(
+  () =>
+    p.toCanonical(
+      p.buildPolar(
+        [
+          { id: 1, sog: 7, twa: 130, tws: 12 },
+          { id: 2, sog: 7, twa: 150, tws: 12 },
+        ],
+        { twsBins: [12], twaStep: 10, minSamples: 1, smooth: false }
+      )
+    ),
+  /inexploitable/
+);
+
 // ── Voisinage de la VMG optimale ──────────────────────────────────────────
 // Connaître le meilleur angle ne suffit pas : ce qu'on barre, c'est la forme
 // de la cloche autour de lui. On vérifie que les voisins sont bien rapportés

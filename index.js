@@ -1515,9 +1515,11 @@ module.exports = function (app) {
       }
       // La lecture honnête et comparable — SOG, vent vrai — comme la polaire
       // partagée. Les réglages d'affichage de la webapp ne la regardent pas.
+      const polar = polarLib.buildPolar(store.runs(), polarOpts({ speed: 'sog', wind: 'true' }));
+      const bandsWithData = polar.bins.filter((b) => b.cells.some((c) => c.value != null)).length;
       let doc;
       try {
-        doc = polarLib.toCanonical(polarLib.buildPolar(store.runs(), polarOpts({ speed: 'sog', wind: 'true' })), {
+        doc = polarLib.toCanonical(polar, {
           name: opts.shareName || 'Autopolar',
           boatType: opts.boatModel || '',
           notes: 'Auto-learned from sailing by signalk-autopolar',
@@ -1525,6 +1527,9 @@ module.exports = function (app) {
       } catch (e) {
         return res.json({ ok: false, error: e.message });
       }
+      // toCanonical écarte les bandes de vent sans mesures des deux bords (voir
+      // lib/polar.js) — on le dit plutôt que de le taire.
+      const bandsDropped = bandsWithData - doc.axes.tws.length;
       const id = polarMgmtId();
       try {
         await app.resourcesApi.setResource('polars', id, doc, PM_PLUGIN);
@@ -1541,16 +1546,23 @@ module.exports = function (app) {
         confirmed = false;
       }
       const cells = doc.values.boatSpeedMatrix.reduce((n, r) => n + r.filter((v) => v > 0).length, 0);
+      const dropNote =
+        bandsDropped > 0
+          ? ` ${bandsDropped} wind band(s) left out — only upwind or only downwind data.`
+          : '';
       res.json({
         ok: true,
         id,
         provider,
         confirmed,
         twsBands: doc.axes.tws.length,
+        bandsDropped,
         cells,
-        note: confirmed
-          ? `Sent to Polar Management as '${id}'.`
-          : `Write submitted as '${id}', but read-back could not confirm it — check the Polar Management page.`,
+        note:
+          (confirmed
+            ? `Sent to Polar Management as '${id}'.`
+            : `Write submitted as '${id}', but read-back could not confirm it — check the Polar Management page.`) +
+          dropNote,
       });
     });
 
