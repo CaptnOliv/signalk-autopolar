@@ -1,0 +1,44 @@
+name: Publish to npm
+
+# Déclenché par le push d'un tag de version (v0.8.0, v0.8.1, ...).
+# Publie sur npm via le trusted publishing OIDC : aucun token, ni ici ni sur
+# la Pi. La provenance est ajoutée automatiquement par npm en contexte OIDC.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write # requis pour l'échange OIDC avec le registre npm
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      # npm >= 11.5.1 est nécessaire pour le trusted publishing ; l'image
+      # ubuntu-latest n'est pas toujours à jour.
+      - run: npm install -g npm@latest
+
+      # Garde-fou : le tag doit correspondre à la version de package.json
+      # (tag v0.8.0 <-> "version": "0.8.0").
+      - name: Le tag correspond à la version du paquet
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Le tag $GITHUB_REF_NAME ne correspond pas à package.json ($PKG)"
+            exit 1
+          fi
+
+      # Aucune dépendance npm : les tests sont des scripts node autonomes.
+      - run: npm test
+
+      - run: npm publish
