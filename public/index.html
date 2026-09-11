@@ -129,7 +129,7 @@
              des seules mesures prises en direct, sans rien effacer. Le
              groupe reste caché tant qu'il n'y a pas d'ébauche. -->
         <div class="group" id="draftGroup" hidden>
-          <label>Draft points</label>
+          <label>History API</label>
           <div class="seg" data-key="history" title="Points drafted from the server history store">
             <button data-v="on">included</button><button data-v="off">hidden</button>
           </div>
@@ -221,13 +221,13 @@
         <button class="act" id="btnRaw">Raw log (.jsonl)</button>
       </div>
       <div class="row-actions" id="pmRow" hidden>
-        <button class="act" id="btnSendPM">Send to Polar Management</button>
+        <button class="act" id="btnSendPM">Send to Polar Management Plugin</button>
         <span class="msg" id="pmMsg"></span>
       </div>
       <!-- Ébauche depuis le History API du serveur. Deux clics, jamais un :
            « check » ne fait que mesurer et annoncer, « import » écrit. -->
       <div class="row-actions" id="histRow" hidden>
-        <button class="act" id="btnHistCheck">Check history data</button>
+        <button class="act" id="btnHistCheck">Check History API data</button>
         <button class="act" id="btnHistImport" hidden>Draft the polar</button>
         <button class="act danger" id="btnHistClear" hidden>Drop draft points</button>
         <span class="msg" id="histMsg"></span>
