@@ -96,8 +96,8 @@ header #updateNote a { color: var(--ink-2); }
   #cardInspect  { order: 5; }
   #cardTable    { order: 6; }
   #cardSail     { order: 7; }
-  #cardSpeedo   { order: 8; }
-  #cardHabits   { order: 9; }
+  #cardHabits   { order: 8; }
+  #cardSpeedo   { order: 9; }
   #cardShare    { order: 10; }
   #cardExport   { order: 11; }
 }

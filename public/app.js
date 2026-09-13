@@ -2060,6 +2060,11 @@ setInterval(refreshSailCompare, 120000);
 // La répartition d'une nav ne bouge pas en une minute : ce battement-là peut
 // être lent.
 setInterval(refreshHabits, 300000);
+// Sans ce battement, une page laissée ouverte plusieurs jours au poste de
+// barre ne rafraîchit jamais `ageDays` : les segments traités restent gelés à
+// l'âge qu'ils avaient au dernier chargement et ne passent donc jamais le
+// seuil « masquer après N jours », qui semble alors ne jamais s'appliquer.
+setInterval(refreshSailHistory, 900000);
 // Le jalon peut tomber pendant qu'une longue nav est en cours et la page
 // ouverte. Un quart d'heure suffit largement : rien ne presse.
 setInterval(refreshSupport, 900000);
