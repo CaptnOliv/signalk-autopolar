@@ -12,6 +12,8 @@ seeing the cloud stops you steering to an oscillation. A dashed marker sits on
 the curve at the same angle, and the line between the two is the whole point —
 short is good, long is a question worth asking.
 
+![The web app under way](docs/where-am-i.jpg)
+
 Underneath, in words:
 
 ```

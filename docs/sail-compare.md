@@ -14,6 +14,8 @@ what is rigged. The window is adjustable (±10° / ±20° / ±30° of angle, ±1
 ±2 / ±4 knots of wind): tighten it when you have plenty of data, widen it when
 the table is thin.
 
+![Change sails](./change-sail2.png)
+
 It is an observation, not an experiment, and the table is built to say so:
 
 - **Every row carries its evidence** — how many measurements, the wind it
