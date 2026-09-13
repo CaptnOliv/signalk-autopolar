@@ -391,11 +391,35 @@ metadata and serves only the API (`/api/...`).
   anchor, where "now" means nothing.
 - **Worth changing sail?** — what the other sail plans did in this wind at this
   angle, with the evidence behind each row (see above).
+- **How you sail** — where your points actually come from: the split by point
+  of sail and by wind strength, the tack balance, the hours of sailing kept,
+  median and best speed, heel, how much of it was after dark. It is there
+  because half an empty diagram is almost never a collection problem — it is
+  the sailing you did, and no threshold will fill it in. Read it next to the
+  quality band: that one says which cells are missing, this one says why.
+  These are the *kept* points, not your logbook: engine time, manoeuvres and
+  time at anchor never entered.
 - **Export** — `.pol` (qtVlm, OpenCPN, Expedition), Jieter text (semicolon
   matrix with VMG target rows, the format the ORC world and Polar Management
   read), CSV with the sample count per cell, full JSON backup, and the raw
   `.jsonl`. **Send to Polar Management** appears when that plugin is installed
   on the same server (see below).
+
+  **What is in the file is what the diagram shows** — SOG or STW, true or
+  apparent wind, mean or median, smoothed or raw, sail-plan filter included.
+  There is no fixed answer to "is this polar in SOG or STW?"; it is whichever
+  button was pressed. That matters: on a boat whose paddlewheel over-reads by
+  10 %, the same polar exported twice five minutes apart gives two files that
+  look identical and differ by 10 %. So the card spells out the current
+  projection above the buttons, the file name repeats it
+  (`Jazzy-sog-true-mean.pol`), and the CSV and Jieter files carry it as a
+  header comment. The `.pol` does not — the format is a bare matrix read by
+  third-party routers that expect no comment line. The JSON backup has no
+  projection at all: it is the raw data.
+
+  The one place nothing is chosen for you is the automatic share (see
+  *Sharing your polar*), which is fixed to SOG / true wind / median so that
+  polars from different boats can be compared.
 
 ## Polar Management hand-off
 
@@ -407,8 +431,13 @@ card shows a **Send to Polar Management** button.
 It hands over the current polar in the canonical
 [polar-format](https://github.com/Asw1n/polar-format) document (SI units, TWS ×
 TWA matrix, VMG targets) straight through the Signal K resources API — no file,
-no copy-paste, no import step. The reading sent is always SOG against true
-wind: the honest, comparable axes, the same ones autopolar shares upstream.
+no copy-paste, no import step. It sends **the reading you have selected**,
+defaulting to SOG against true wind — the axes a miscalibrated sensor cannot
+falsify — and the confirmation message says which one went. Display *filters*
+(sail plan, hidden points) do not follow: what is handed over is the boat's
+polar, not a working view. You are the only one who knows whether your speed
+sensor tells the truth, so the choice stays yours; it is simply never made
+silently.
 
 The polar lands under a **stable id** (`autopolar`, or `autopolar-<share name>`
 when a share name is set), so every send **replaces** the previous one instead
@@ -608,6 +637,16 @@ can check a declaration. The web app shows the whole payload at any time
 (**See exactly what is sent**), which is the point: a contribution you cannot
 read is one you end up switching off.
 
+The payload also carries **what decided the engine was off**, point by point —
+measured state, RPM, both agreeing, autostate, or a declaration. That one field
+is what makes a received polar readable. On the first polar the pool got from
+another boat, a handful of cells were plainly impossible (5.1 kn in 4 kn of
+wind); the question "was this boat declaring, or measuring?" had no answer in
+the file. It does now. The number of measurements behind each cell travels with
+the polar for the same reason: every one of those impossible cells rested on
+one or two samples, while the body of the table — eight samples and up — was
+perfectly consistent.
+
 For now there is no frontend to download the built polars, because there is not enough polars shared (actually only mine as per September 2026), but as soon as it gets some polar to share, I will make the frontend so everyone can consult them !
 
 ## Letting me know this install exists
@@ -637,6 +676,29 @@ boat name alone could not do that job — two Oceanis 48 whose owners both typed
 "Jazzy" used to overwrite each other's polar in the pool, in silence, and
 renaming your boat left an orphan copy behind instead of replacing your own.
 Turning the ping off stops the daily ping, not that key.
+
+## Telling you a new version is out
+
+The SignalK Appstore already shows plugin updates. Nobody opens it without a
+reason — on the installs that ping the collector, close to half were running a
+version behind. The web app, on the other hand, is open while you sail.
+
+So once a day the plugin asks the npm registry — the same place the Appstore
+installs from — what the latest published version is, and shows one discreet
+line at the top of the web app if you are behind. One line, never a banner,
+never a modal, and it never updates anything by itself: installing stays a
+decision you make in the Appstore, at a moment that suits you.
+
+This has nothing in common with the install ping above, and the difference is
+the whole point. The ping carries a persistent identifier and buys you nothing,
+so it has to be enumerated field by field and stay switchable. This is a plain
+`GET`: no body, no identifier, nothing about you or your boat, and the only
+person it serves is the one who triggered it. The package name comes from the
+plugin's own `package.json`, so a fork asks about itself, not about me.
+
+Offline it gives up quietly. No "update check failed", no red dot: at sea,
+having no network is the normal state, not an incident. Switch the whole thing
+off with **Tell me in the web app when a newer version is out**.
 
 ## Idle alert (ntfy)
 
@@ -709,7 +771,10 @@ Neither reads anything until you press the button.
 plugin](#supporting-the-plugin). Off means it never appears. `usageStats`
 controls the daily "this install exists" ping described in [Letting me know
 this install exists](#letting-me-know-this-install-exists); off means nothing
-counts your installation anywhere.
+counts your installation anywhere. `checkForUpdates` controls the daily npm
+lookup described in [Telling you a new version is
+out](#telling-you-a-new-version-is-out); off means the web app never mentions
+versions.
 
 ## Tests
 
@@ -731,7 +796,12 @@ a queued alert still gets out at anchor), `share` (nothing leaves the boat
 without consent and a boat identity, one send per threshold, and a failed send
 is retried rather than lost), `usage` (the daily ping cannot grow a field
 without the configuration text growing with it, nothing goes out in the first
-hour, and the install ID survives a restart), `history` (angles are never averaged, the
+hour, and the install ID survives a restart), `update` (a pre-release is never offered, a
+scoped package name is escaped so the registry does not answer 404 forever in
+silence, and being offline leaves the last known answer standing instead of
+raising an alarm), `habits` (a point falls in exactly one point of sail
+whichever tack it is on, and no attitude sensor means no heel line rather than
+a 0° that would pass for a measurement), `history` (angles are never averaged, the
 engine guard band works in both directions, the resolution is measured on a
 store whose 1-second buckets are one-third empty, and an already-watched period
 is left alone) and `smoke` —

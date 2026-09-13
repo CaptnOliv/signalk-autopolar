@@ -59,6 +59,15 @@ header {
 header .titlerow { display: flex; align-items: baseline; gap: 12px; }
 header .sub { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
 header #btnReload { margin-left: auto; flex: none; }
+/* Une version plus récente existe. Une ligne, au même rang que le sous-titre :
+   c'est une information, pas un incident — d'où la rampe de vent plutôt que la couleur
+   d'alerte, qui est réservée à ce qui est cassé. */
+header #updateNote { margin-top: 4px; font-size: 12px; }
+header #updateNote b { color: var(--w4); }
+/* Le lien hérite sinon du bleu par défaut du navigateur, illisible sur fond
+   sombre — le seul endroit de la page où un <a> nu se retrouvait hors des
+   barres de liens. */
+header #updateNote a { color: var(--ink-2); }
 
 .card {
   background: var(--surface);
@@ -88,8 +97,9 @@ header #btnReload { margin-left: auto; flex: none; }
   #cardTable    { order: 6; }
   #cardSail     { order: 7; }
   #cardSpeedo   { order: 8; }
-  #cardShare    { order: 9; }
-  #cardExport   { order: 10; }
+  #cardHabits   { order: 9; }
+  #cardShare    { order: 10; }
+  #cardExport   { order: 11; }
 }
 
 /* ── Bandeau d'état en direct ──────────────────────────────────────────── */
@@ -382,6 +392,10 @@ code { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color
   font-size: 12px; color: var(--ink-2);
 }
 .hint.warn { color: var(--warning); }
+/* Une mise en garde à l'intérieur d'une ligne d'aide (ex. « STW is whatever
+   your paddlewheel reads ») : le reste de la phrase doit rester en gris, sinon
+   c'est toute la ligne qui crie. */
+.hint .warn { color: var(--warning); }
 /* Le compte rendu de l'historique est écrit en lignes : une par question
    (ce qui a été lu, ce qui manque, ce que ça donnerait). On garde les sauts
    de ligne, et une chasse fixe pour que les chiffres s'alignent. */
@@ -440,3 +454,37 @@ footer a:hover, .linkbar a:hover { color: var(--ink); text-decoration: underline
    header, juste en dessous, suffit à la détacher. */
 .linkbar { margin: 0 0 12px; }
 footer { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+
+/* ── Comment ce bateau navigue ──────────────────────────────────────────────
+   Deux répartitions, toutes deux ORDONNÉES (du près au vent arrière, du petit
+   temps au coup de vent) : une seule teinte par répartition, du sombre au
+   clair, jamais des couleurs catégorielles. Une barre qui va de gauche à
+   droite se compare d'un coup d'œil, ce qu'un camembert ne permet pas. */
+.habits-rows { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center; }
+.habits-rows .hl { color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+.habits-rows .hb { height: 10px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.habits-rows .hb > span { display: block; height: 100%; border-radius: 3px; }
+.habits-rows .hv {
+  font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink);
+  min-width: 4.2em; text-align: right;
+}
+/* Une bande jamais parcourue : elle reste visible, sinon on croirait que
+   l'échelle s'arrête là. Elle est juste éteinte. */
+.habits-rows .hl.off, .habits-rows .hv.off { color: var(--muted); }
+#habits h3 {
+  margin: 14px 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--muted);
+}
+#habits h3:first-child { margin-top: 0; }
+/* La précision d'axe (TWA/TWS) n'est pas le titre : ni majuscule, ni gras,
+   comme les sous-titres des cartes h2 ailleurs sur la page. */
+#habits h3 .sub { text-transform: none; font-weight: 400; letter-spacing: normal; }
+/* Une grille plutôt qu'un flex : six faits qui s'enchaînent sur une ligne se
+   lisent comme une phrase, et on finit par lire « of sailing kept tacks 35% ».
+   Une colonne par fait, chacun entier. */
+#habits .facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 4px 18px; margin-top: 12px; font-size: 13px;
+}
+#habits .facts span { color: var(--ink-2); }
+#habits .facts b { color: var(--ink); font-variant-numeric: tabular-nums; }

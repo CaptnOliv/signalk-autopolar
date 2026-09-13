@@ -30,6 +30,8 @@ const sailchange = require('./lib/sailchange');
 const { createShare } = require('./lib/share');
 const { createSupport } = require('./lib/support');
 const { createUsage, pingEndpointFrom } = require('./lib/usage');
+const { createUpdate } = require('./lib/update');
+const habitsLib = require('./lib/habits');
 const history = require('./lib/history');
 
 // Les liens du pied de page et du bandeau « un coup de pouce ». En dur, et
@@ -84,6 +86,7 @@ module.exports = function (app) {
   let sharer = null;
   let supporter = null;
   let usage = null;
+  let updater = null;
   let sailSecs = 0;
   let idleAlerted = false;
   let idleRejects = {};
@@ -177,7 +180,7 @@ module.exports = function (app) {
         type: 'boolean',
         title: 'Contribute my polar to the shared pool',
         description:
-          'This plugin is free and stays free. In exchange it sends the polar it has learned to a shared pool, on its own, every few hundred new points — nothing to click, nothing to remember. Only the polar, the boat model and the name above leave the boat: no position, no track, no raw log. If you have drafted a polar from the server history store, those points count in the shared polar too, and the payload says how many of them there are. The exact payload is readable at any time in the webapp, under Share. Turning this off leaves the plugin fully working; it just stops the pool from growing.',
+          'This plugin is free and stays free. In exchange it sends the polar it has learned to a shared pool, on its own, every few hundred new points — nothing to click, nothing to remember. Only the polar, the boat model and the name above leave the boat: no position, no track, no raw log. It also says how the engine-off check was made for those points (measured state, RPM, or a declaration), because a polar nobody can second-guess is a polar nobody can trust. If you have drafted a polar from the server history store, those points count in the shared polar too, and the payload says how many of them there are. The exact payload is readable at any time in the webapp, under Share. Turning this off leaves the plugin fully working; it just stops the pool from growing.',
         default: true,
       },
       shareEveryPoints: {
@@ -192,6 +195,13 @@ module.exports = function (app) {
         title: 'Let me know this install exists',
         description:
           'Once a day this sends, and nothing else: a random ID drawn once on this install (tied to nothing \u2014 not your boat name, not your hardware, not your network), the plugin version, the Node version, the SignalK version, the date that ID was drawn, and whether polar sharing is on. No position, no boat name, no polar, no IP address kept by the server. It is the only way I have of knowing whether anyone out there is running this plugin. The exact payload is readable at any time in the web app, under Share. The same ID travels with a shared polar as its key, so that your sends replace each other instead of colliding with another boat of the same name \u2014 turning this off stops the daily ping, not that key.',
+        default: true,
+      },
+      checkForUpdates: {
+        type: 'boolean',
+        title: 'Tell me in the web app when a newer version is out',
+        description:
+          'Once a day the plugin asks the npm registry \u2014 the same place the SignalK Appstore installs from \u2014 what the latest published version of this plugin is, and shows one discreet line in the web app if you are behind. It is a plain GET: no identifier, no payload, nothing about you or your boat is sent, and the answer is never acted on automatically \u2014 updating stays a decision you make in the Appstore. Offline it silently gives up rather than showing an error, because at sea having no network is the normal state.',
         default: true,
       },
       publishPerformance: {
@@ -547,6 +557,9 @@ module.exports = function (app) {
       // de toute branche de la collecte, sinon un bateau qui ne navigue pas ne
       // serait jamais compté — alors que c'est précisément une installation.
       if (usage) usage.maybeSend(usageOpts(), usagePayload);
+      // Même endroit, même raison : hors de toute branche de la collecte, pour
+      // qu'un bateau qui ne navigue pas sache quand même qu'il est en retard.
+      if (updater) updater.maybeCheck(updateOpts());
       tick();
     } catch (e) {
       counters.errors = (counters.errors || 0) + 1;
@@ -1219,6 +1232,17 @@ module.exports = function (app) {
     const polar = polarLib.buildPolar(store.runs(), polarOpts({ shared: '1', speed: 'sog', wind: 'true', stat: 'median' }));
     const runs = store.runs();
     const declared = runs.filter((r) => r.engineSource === 'declared').length;
+    // Sur quoi repose la décision « ce bateau n'était pas au moteur », point
+    // par point. Sans ça, une polaire reçue ne se relit pas : une case à
+    // 5,5 nd par 30° de vent vrai peut être une mesure sous voile, une parole
+    // (`declared`), ou un défaut d'autostate — et rien, dans la matrice, ne
+    // permet de trancher. `declaredExcluded` disait déjà ce qu'on a jeté ;
+    // ceci dit ce qu'on a gardé, et d'où vient le verdict.
+    const engineSources = {};
+    for (const r of runs) {
+      const k = r.engineSource || 'unknown';
+      engineSources[k] = (engineSources[k] || 0) + 1;
+    }
     // Les points d'ébauche partent avec le reste, et leur nombre part avec
     // eux. Le collecteur peut les pondérer ou les écarter ; ce qui compte est
     // qu'on ne les fasse pas passer pour des mesures prises en direct.
@@ -1255,6 +1279,7 @@ module.exports = function (app) {
       points: polar.used,
       totalPoints: runs.length,
       declaredExcluded: declared,
+      engineSources,
       historyPoints: fromHistory,
       cells,
       bands,
@@ -1281,6 +1306,15 @@ module.exports = function (app) {
       signalk: (app && app.config && app.config.version) || null,
       firstSeen: st.firstSeen || null,
       sharing: Boolean(opts.sharePolar && opts.boatModel && opts.shareName),
+    };
+  }
+
+  // Réglages passés à lib/update.js. Le nom du paquet vient du package.json,
+  // jamais d'une constante : un fork interroge son propre nom.
+  function updateOpts() {
+    return {
+      checkForUpdates: Boolean(opts.checkForUpdates),
+      name: require('./package.json').name,
     };
   }
 
@@ -1765,6 +1799,23 @@ module.exports = function (app) {
       });
     });
 
+    // Comment ce bateau navigue. Sur tous les points retenus, sans filtre
+    // d'affichage : ce n'est pas une vue de la polaire, c'est la description de
+    // la matière dont elle est faite — et l'explication d'une moitié vide.
+    router.get('/api/habits', (req, res) => {
+      if (!store) return res.json({ points: 0 });
+      res.json(habitsLib.summarise(store.runs()));
+    });
+
+    // Une version plus récente existe-t-elle ? La route répond aussi quand la
+    // vérification est coupée : la webapp affiche alors la version installée et
+    // rien d'autre, plutôt que de laisser croire qu'on est à jour.
+    router.get('/api/update', (req, res) => {
+      const current = require('./package.json').version;
+      if (!updater) return res.json({ enabled: false, current, latest: null, checkedAt: null });
+      res.json(updater.status(current, opts.checkForUpdates));
+    });
+
     router.get('/api/usage.json', (req, res) => {
       res.type('application/json');
       res.send(JSON.stringify(usagePayload(), null, 2));
@@ -1821,21 +1872,50 @@ module.exports = function (app) {
       res.json({ ok: true, state: supporter.answer(String(body(req).outcome || '')) });
     });
 
+    // Un export porte une projection — SOG ou STW, vent vrai ou apparent,
+    // moyenne ou médiane — et sur un bateau dont le speedo sur-lit de 10 %,
+    // deux fichiers pris à cinq minutes d'écart ne valent pas la même chose.
+    // Le nom du fichier le dit, parce que le contenu, lui, ne le dira jamais :
+    // le format .pol est une matrice nue et rien d'autre.
+    function exportName(polar, ext) {
+      const boat = String(opts.shareName || 'polar').replace(/[^A-Za-z0-9_-]+/g, '-') || 'polar';
+      return `${boat}-${polar.speed}-${polar.wind}-${polar.stat}.${ext}`;
+    }
+    // setHeader plutôt que la méthode `set` d'Express : elle existe sur la
+    // réponse HTTP native, donc la route marche aussi hors serveur SignalK
+    // (aperçu, tests) au lieu de lever une exception à l'exécution.
+    function attach(res, name) {
+      res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    }
+
     router.get('/api/export.pol', (req, res) => {
+      const polar = polarLib.buildPolar(store.runs(), polarOpts(req.query));
       res.type('text/plain');
-      res.send(polarLib.toPol(polarLib.buildPolar(store.runs(), polarOpts(req.query))));
+      // Pas de ligne de commentaire dans le .pol : le format est lu par des
+      // routeurs tiers qui n'en attendent aucune. Le nom du fichier porte
+      // seul l'information.
+      attach(res, exportName(polar, 'pol'));
+      res.send(polarLib.toPol(polar));
     });
     router.get('/api/export.csv', (req, res) => {
+      const polar = polarLib.buildPolar(store.runs(), polarOpts(req.query));
       res.type('text/csv');
-      res.send(polarLib.toCsv(polarLib.buildPolar(store.runs(), polarOpts(req.query))));
+      attach(res, exportName(polar, 'csv'));
+      res.send(polarLib.toCsv(polar));
     });
     router.get('/api/export.json', (req, res) => {
       res.type('application/json');
+      const boat = String(opts.shareName || 'polar').replace(/[^A-Za-z0-9_-]+/g, '-') || 'polar';
+      // La sauvegarde n'a pas de projection : c'est le brut, tel qu'il est sur
+      // le disque. Le nom ne prétend donc pas le contraire.
+      attach(res, `${boat}-autopolar-backup.json`);
       res.send(JSON.stringify({ runs: store.runs(), overrides: store.overrides(), opts }, null, 2));
     });
     router.get('/api/export.jieter', (req, res) => {
+      const polar = polarLib.buildPolar(store.runs(), polarOpts(req.query));
       res.type('text/plain');
-      res.send(polarLib.toJieter(polarLib.buildPolar(store.runs(), polarOpts(req.query))));
+      attach(res, exportName(polar, 'jieter.csv'));
+      res.send(polarLib.toJieter(polar));
     });
 
     // ── Envoi direct vers signalk-polar-management ──────────────────────────
@@ -1872,9 +1952,16 @@ module.exports = function (app) {
       if (!provider) {
         return res.json({ ok: false, error: 'signalk-polar-management is not installed on this server' });
       }
-      // La lecture honnête et comparable — SOG, vent vrai — comme la polaire
-      // partagée. Les réglages d'affichage de la webapp ne la regardent pas.
-      const polar = polarLib.buildPolar(store.runs(), polarOpts({ speed: 'sog', wind: 'true' }));
+      // La lecture part de ce que la webapp affiche, parce que c'est celle que
+      // l'utilisateur a choisie et qu'il est le seul à savoir si son speedo dit
+      // vrai. SOG / vent vrai restent le défaut — le seul couple qu'un capteur
+      // mal calibré ne fausse pas — mais un défaut se change, alors qu'une
+      // valeur forcée en silence envoie une polaire que personne n'a demandée.
+      // Les filtres (voilure, exclusions d'affichage) ne suivent pas : c'est la
+      // polaire du bateau qu'on livre, pas une vue de travail.
+      const b = body(req);
+      const proj = { speed: b.speed || 'sog', wind: b.wind || 'true', stat: b.stat || 'mean' };
+      const polar = polarLib.buildPolar(store.runs(), polarOpts(proj));
       const bandsWithData = polar.bins.filter((b) => b.cells.some((c) => c.value != null)).length;
       let doc;
       try {
@@ -1909,6 +1996,10 @@ module.exports = function (app) {
         bandsDropped > 0
           ? ` ${bandsDropped} wind band(s) left out — only upwind or only downwind data.`
           : '';
+      // Dit à voix haute ce qui vient de partir. Une polaire STW sur un bateau
+      // dont le speedo sur-lit part fausse du même pourcentage, et elle sera
+      // relue plus tard par un routeur qui n'aura aucun moyen de le savoir.
+      const projNote = ` Sent as ${polar.speed.toUpperCase()} / ${polar.wind} wind / ${polar.stat}.`;
       res.json({
         ok: true,
         id,
@@ -1917,10 +2008,14 @@ module.exports = function (app) {
         twsBands: doc.axes.tws.length,
         bandsDropped,
         cells,
+        speed: polar.speed,
+        wind: polar.wind,
+        stat: polar.stat,
         note:
           (confirmed
             ? `Sent to Polar Management as '${id}'.`
             : `Write submitted as '${id}', but read-back could not confirm it — check the Polar Management page.`) +
+          projNote +
           dropNote,
       });
     });
@@ -2037,6 +2132,8 @@ module.exports = function (app) {
     supporter = createSupport(path.join(dir, 'support.json'), { minProgress: 15, againAfterProgress: 15 });
     // En debug : un ping raté n'est la panne de personne (voir lib/usage.js).
     usage = createUsage(path.join(dir, 'usage.json'), (m) => app.debug(`[polar] ${m}`));
+    // Idem : au large la vérification échoue et ce n'est la panne de personne.
+    updater = createUpdate(path.join(dir, 'update.json'), (m) => app.debug(`[polar] ${m}`));
 
     timer = setInterval(safeTick, 1000);
     updateStatus();
@@ -2045,6 +2142,7 @@ module.exports = function (app) {
   plugin.stop = function () {
     if (timer) clearInterval(timer);
     timer = null;
+    updater = null;
     buffer = [];
     store = null;
   };

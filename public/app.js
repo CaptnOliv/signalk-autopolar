@@ -1485,6 +1485,26 @@ async function refreshShare() {
     `${d.bands} wind bands`,
   ].filter(Boolean);
 
+// Sur quoi repose le verdict « pas au moteur », point par point — et ça part
+// avec la polaire. Ce n'est pas de la coquetterie : une case aberrante dans une
+// polaire reçue ne se diagnostique pas sans ça, et la sienne non plus.
+const ENGINE_SOURCE_LABEL = {
+  'state+rpm': 'engine state and RPM agreed',
+  state: 'engine state',
+  rpm: 'RPM',
+  autostate: 'signalk-autostate (no engine data at the time)',
+  declared: 'your own "I am sailing" declaration',
+  unknown: 'unknown',
+};
+function engineSourceNote(src) {
+  if (!src || !Object.keys(src).length) return '';
+  const parts = Object.entries(src)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `<b>${n}</b> ${ENGINE_SOURCE_LABEL[k] || k}`);
+  return `<div class="hint">Engine-off verdict — ${parts.join(', ')}. Sent along with the polar, so an odd
+    cell can be traced back to what decided it.</div>`;
+}
+
   const remaining = d.nextAt != null ? Math.max(0, d.nextAt - d.collected) : null;
   let status;
   if (!d.enabled) {
@@ -1511,6 +1531,7 @@ async function refreshShare() {
       ? `<div class="hint">${d.declaredExcluded} point(s) recorded on a "sailing" declaration are left out of what
           is shared — nobody else can check a declaration.</div>`
       : '') +
+    engineSourceNote(d.engineSources) +
     `<div class="row-actions">
        <button class="act" id="btnShareNow">Send now</button>
        <button class="act" id="btnShareSee">See exactly what is sent</button>
@@ -1719,6 +1740,36 @@ function bindControls() {
 function syncControls() {
   for (const seg of document.querySelectorAll('#controls .seg'))
     for (const b of seg.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === ui[seg.dataset.key]));
+  syncExportHint();
+}
+
+// Ce que contiennent les fichiers, en toutes lettres, au moment où on va
+// cliquer. Les exports .pol / Jieter / CSV suivent les boutons du haut : sur un
+// bateau dont le speedo sur-lit, la même polaire téléchargée en SOG puis en STW
+// donne deux fichiers qui diffèrent de 10 % et se ressemblent trait pour trait.
+// Le libellé long, celui qu'on écrit une fois avant un téléchargement — pas
+// SPEED_LABEL, qui tient dans une cellule de tableau.
+const SPEED_EXPORT_LABEL = { sog: 'SOG (over ground)', stw: 'STW (through the water)', stwc: 'STW corrected' };
+function syncExportHint() {
+  const el = $('#exportHint');
+  if (!el) return;
+  const bits = [
+    SPEED_EXPORT_LABEL[ui.speed] || ui.speed,
+    `${ui.wind} wind`,
+    `${ui.stat} per cell`,
+    ui.smooth === 'on' ? 'smoothed' : 'raw curve',
+  ];
+  if (ui.sailFilter && (ui.sailFilter.main || ui.sailFilter.head))
+    bits.push(`sail plan ${[ui.sailFilter.main, ui.sailFilter.head].filter(Boolean).join(' + ')} only`);
+  let txt =
+    `.pol, Jieter and CSV contain what the diagram shows — <b>${bits.join(' · ')}</b>. ` +
+    `Change the buttons at the top to change the file; the file name repeats the choice. ` +
+    `JSON backup is the raw data, with no projection at all.`;
+  // Une mise en garde, pas un verrou : c'est son bateau et son capteur.
+  if (ui.speed === 'stw')
+    txt +=
+      ` <span class="warn">STW is whatever your paddlewheel reads — check the speed sensor card before feeding it to a router.</span>`;
+  el.innerHTML = txt;
 }
 
 // ── Export & maintenance ────────────────────────────────────────────────────
@@ -1739,7 +1790,10 @@ function bindActions() {
       $('#pmRow').hidden = false;
       $('#btnSendPM').onclick = async () => {
         $('#pmMsg').textContent = 'sending…';
-        const r = await post('/api/polar-management/send', {});
+        // La projection choisie part avec l'envoi. Les filtres, non : c'est la
+        // polaire du bateau qu'on livre à Polar Management, pas une vue de
+        // travail sur une voilure donnée.
+        const r = await post('/api/polar-management/send', { speed: ui.speed, wind: ui.wind, stat: ui.stat });
         $('#pmMsg').textContent = r.ok
           ? `✓ ${r.note} ${r.cells} cells over ${r.twsBands} wind bands`
           : `✗ ${r.error}`;
@@ -1774,6 +1828,106 @@ function bindActions() {
     refreshPolar();
     say('points cleared');
   };
+}
+
+// « Il existe une version plus récente. » La route ne renvoie `latest` que
+// s'il est réellement plus récent : aucune règle de version ici, donc aucun
+// endroit de plus où se tromper. Hors ligne elle ne renvoie rien et on
+// n'affiche rien — au large, pas de réseau est l'état normal, pas une panne.
+async function refreshUpdate() {
+  const el = $('#updateNote');
+  if (!el) return;
+  try {
+    const u = await (await fetch(`${API}/api/update`)).json();
+    if (!u || !u.latest) return void (el.hidden = true);
+    el.innerHTML =
+      `<b>v${u.latest}</b> is out — you are running v${u.current}. Update from the SignalK Appstore. ` +
+      `<a href="https://github.com/CaptnOliv/signalk-autopolar/releases" target="_blank" rel="noopener">What changed</a>`;
+    el.hidden = false;
+  } catch (e) {
+    el.hidden = true;
+  }
+}
+
+// ── Comment ce bateau navigue ───────────────────────────────────────────────
+//
+// Factuel, et rien d'autre. L'intérêt n'est pas de commenter le style du
+// barreur mais d'expliquer la polaire : une moitié de diagramme vide se lit
+// ici, en une ligne, et aucun réglage de seuil n'y changera quoi que ce soit.
+//
+// La mise en garde est portée par la carte elle-même : ce sont les points
+// RETENUS, pas le livre de bord. Le moteur, les manœuvres et le mouillage n'y
+// sont jamais entrés — d'où les heures affichées à côté du nombre de points.
+function habitRows(bands, ramp, unit) {
+  const top = Math.max(...bands.map((b) => b.share), 0.0001);
+  return (
+    '<div class="habits-rows">' +
+    bands
+      .map((b, i) => {
+        const pct = (100 * b.share).toFixed(1);
+        const off = b.points ? '' : ' off';
+        const range = b.to == null ? `${b.from}+${unit}` : `${b.from}–${b.to}${unit}`;
+        return (
+          `<span class="hl${off}">${b.label} <span class="k">${range}</span></span>` +
+          `<span class="hb"><span style="width:${(100 * b.share) / top}%;background:${ramp[i % ramp.length]}"></span></span>` +
+          `<span class="hv${off}">${pct}%</span>`
+        );
+      })
+      .join('') +
+    '</div>'
+  );
+}
+
+async function refreshHabits() {
+  const el = $('#habits');
+  if (!el) return;
+  let h;
+  try {
+    h = await (await fetch(`${API}/api/habits`)).json();
+  } catch (e) {
+    return;
+  }
+  if (!h || !h.points) {
+    el.innerHTML = '<div class="empty">Not enough data yet.</div>';
+    return;
+  }
+  const kn = (v) => (v == null ? '—' : v.toFixed(1));
+  const pct = (v) => `${Math.round(100 * v)}%`;
+
+  const facts = [
+    `<span><b>${h.points}</b> points · <b>${h.hours.toFixed(1)} h</b> of sailing kept</span>`,
+    `<span>tacks <b>${pct(h.tacks.port / h.points)}</b> port / <b>${pct(h.tacks.starboard / h.points)}</b> starboard</span>`,
+    `<span>speed <b>${kn(h.speed.median)}</b> kn median, best <b>${kn(h.speed.best)}</b> kn</span>`,
+    `<span>wind <b>${kn(h.windSeen.median)}</b> kn median, strongest <b>${kn(h.windSeen.strongest)}</b> kn</span>`,
+    h.heel ? `<span>heel <b>${h.heel.median.toFixed(1)}°</b> median, <b>${h.heel.p90.toFixed(1)}°</b> at p90</span>` : '',
+    `<span><b>${pct(h.night.share)}</b> after dark</span>`,
+  ]
+    .filter(Boolean)
+    .join('');
+
+  // La conséquence, dite platement. Le seuil de 65 % n'est pas un jugement :
+  // c'est le point où la moitié creuse du diagramme cesse d'être un accident
+  // de collecte pour devenir la description de la nav.
+  let note = '';
+  const thin = h.pointsOfSail.filter((b) => b.share < 0.05).map((b) => b.label);
+  if (h.balance.downwind >= 0.65)
+    note = `<div class="hint"><b>${pct(h.balance.downwind)}</b> of these points are downwind. The upwind half of the
+      diagram is thin for that reason, and no threshold will fill it — only sailing there will.</div>`;
+  else if (h.balance.upwind >= 0.65)
+    note = `<div class="hint"><b>${pct(h.balance.upwind)}</b> of these points are upwind. The downwind half of the
+      diagram is thin for that reason, and no threshold will fill it — only sailing there will.</div>`;
+  else if (thin.length)
+    note = `<div class="hint">Barely covered: <b>${thin.join(', ')}</b>. Those cells rest on very little.</div>`;
+
+  el.innerHTML =
+    '<h3>Points of sail <span class="sub">— true wind angle</span></h3>' +
+    habitRows(h.pointsOfSail, RAMP2, '°') +
+    '<h3>Wind strength <span class="sub">— true wind speed</span></h3>' +
+    habitRows(h.wind, RAMP, ' kn') +
+    `<div class="facts">${facts}</div>` +
+    note +
+    `<div class="hint">These are the points the polar is built from — stable sailing only. Time under engine,
+      manoeuvres and time at anchor never entered, so this is not your logbook.</div>`;
 }
 
 async function refreshStatus() {
@@ -1874,6 +2028,8 @@ function refreshAll(resetBins) {
   refreshShare();
   refreshSupport();
   refreshSailCompare();
+  refreshHabits();
+  refreshUpdate();
 }
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) refreshAll(false);
@@ -1891,6 +2047,8 @@ refreshSailHistory();
 refreshShare();
 refreshSupport();
 refreshSailCompare();
+refreshHabits();
+refreshUpdate();
 setInterval(refreshLive, 2000);
 setInterval(refreshStatus, 15000);
 setInterval(refreshPolar, 60000);
@@ -1899,6 +2057,9 @@ setInterval(refreshSpeedo, 60000);
 // coin de polaire ; ce battement ne sert qu'au cas où on y reste (des points
 // tombent, le tableau doit en tenir compte) et quand le repère est éteint.
 setInterval(refreshSailCompare, 120000);
+// La répartition d'une nav ne bouge pas en une minute : ce battement-là peut
+// être lent.
+setInterval(refreshHabits, 300000);
 // Le jalon peut tomber pendant qu'une longue nav est en cours et la page
 // ouverte. Un quart d'heure suffit largement : rien ne presse.
 setInterval(refreshSupport, 900000);

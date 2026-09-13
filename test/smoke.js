@@ -16,10 +16,10 @@ const realNow = Date.now;
 Date.now = () => now;
 
 // Aucun accès réseau dans les tests, et on le vérifie au lieu de l'espérer.
-// Le plugin fait deux sorties HTTP — le reversement de la polaire et le ping
-// d'installation — et ni l'une ni l'autre n'a quoi que ce soit à faire dans
-// un `npm test` : ce serait le collecteur de production qui compterait les
-// machines de développement.
+// Le plugin fait trois sorties HTTP — le reversement de la polaire, le ping
+// d'installation et la vérification de version chez npm — et aucune n'a quoi
+// que ce soit à faire dans un `npm test` : ce serait le collecteur de
+// production qui compterait les machines de développement.
 const realFetch = global.fetch;
 const netAttempts = [];
 global.fetch = async (url) => {
@@ -166,16 +166,36 @@ plugin.registerWithRouter({
   get: (p, h) => (routes['GET ' + p] = h),
   post: (p, h) => (routes['POST ' + p] = h),
 });
+// Les en-têtes du dernier appel. Le nom d'un fichier exporté porte la
+// projection — c'est la seule chose qui, une fois le .pol téléchargé, dit
+// encore si on regarde du SOG ou du STW.
+let lastHeaders = {};
 function call(key, query = {}, body = {}) {
   let out = null;
-  routes[key]({ query, body }, { json: (v) => (out = v), type: () => {}, send: (v) => (out = v), end: () => {} });
+  lastHeaders = {};
+  routes[key](
+    { query, body },
+    {
+      json: (v) => (out = v),
+      type: () => {},
+      send: (v) => (out = v),
+      end: () => {},
+      setHeader: (k, v) => (lastHeaders[k] = v),
+    }
+  );
   return out;
 }
 // Les routes de l'historique sont asynchrones (elles interrogent le serveur) :
 // on attend la réponse au lieu de lire un null.
 function callAsync(key, query = {}, body = {}) {
   return new Promise((resolve, reject) => {
-    const res = { json: resolve, type: () => {}, send: resolve, end: () => resolve(null) };
+    const res = {
+      json: resolve,
+      type: () => {},
+      send: resolve,
+      end: () => resolve(null),
+      setHeader: (k, v) => (lastHeaders[k] = v),
+    };
     Promise.resolve(routes[key]({ query, body }, res)).catch(reject);
   });
 }
@@ -221,9 +241,43 @@ assert.ok(loose.count > dry.count, 'une fenêtre plus courte donne plus de point
 
 // Exports.
 assert.ok(call('GET /api/export.pol', { min: '1' }).startsWith('twa/tws\t'));
-assert.ok(call('GET /api/export.csv', { min: '1' }).includes('twa,'));
+const csv = call('GET /api/export.csv', { min: '1' });
+assert.ok(/^# signalk-autopolar/.test(csv) && /\ntwa,/.test(csv), 'le CSV annonce sa projection');
 const jieter = call('GET /api/export.jieter', { min: '1' });
 assert.ok(/^# signalk-autopolar/.test(jieter) && /\ntwa\/tws;/.test(jieter), 'export Jieter bien formé');
+
+// Un .pol est une matrice nue : rien dans le fichier ne dit s'il est en SOG ou
+// en STW. Le nom le dit, et c'est pour ça qu'il est verrouillé ici — deux
+// exports pris à cinq minutes d'écart doivent être distinguables après coup.
+call('GET /api/export.pol', { min: '1', speed: 'sog', wind: 'true', stat: 'mean' });
+assert.match(lastHeaders['Content-Disposition'], /filename="[^"]*-sog-true-mean\.pol"/, `nom SOG : ${lastHeaders['Content-Disposition']}`);
+call('GET /api/export.pol', { min: '1', speed: 'stw', wind: 'apparent', stat: 'median' });
+assert.match(lastHeaders['Content-Disposition'], /filename="[^"]*-stw-apparent-median\.pol"/, `nom STW : ${lastHeaders['Content-Disposition']}`);
+// La sauvegarde JSON n'a pas de projection et ne doit pas prétendre en avoir une.
+call('GET /api/export.json');
+assert.match(lastHeaders['Content-Disposition'], /filename="[^"]*-autopolar-backup\.json"/);
+
+// Comment ce bateau navigue. Le faux bord tire un bord sous voile : la carte
+// doit décrire ces points-là, et rien d'autre — surtout pas le temps moteur ni
+// le mouillage, qui ne sont jamais entrés dans la collecte.
+const hab = call('GET /api/habits');
+assert.strictEqual(hab.points, afterMotor, 'la carte décrit les points retenus, pas le temps passé en mer');
+assert.ok(hab.hours > 0 && hab.hours < 1, `quelques minutes de nav retenues, obtenu ${hab.hours}`);
+assert.strictEqual(
+  hab.pointsOfSail.reduce((a, b) => a + b.points, 0),
+  hab.points,
+  'chaque point tombe dans exactement une allure'
+);
+assert.strictEqual(hab.wind.reduce((a, b) => a + b.points, 0), hab.points);
+assert.strictEqual(hab.tacks.port + hab.tacks.starboard, hab.points);
+assert.ok(Math.abs(hab.balance.upwind + hab.balance.downwind - 1) < 1e-9);
+
+// Mise à jour : la route répond toujours, même sans vérification faite, et elle
+// n'annonce rien tant qu'elle ne sait rien. C'est ce qui permet à la webapp de
+// n'avoir aucune règle de version à réimplémenter.
+const upd = call('GET /api/update');
+assert.strictEqual(upd.latest, null, 'rien de vérifié, rien d\'annoncé');
+assert.ok(/^\d+\.\d+\.\d+/.test(upd.current), `version installée annoncée : ${upd.current}`);
 
 // Polar Management : le faux serveur n'a pas de resourcesApi, donc indisponible,
 // et l'envoi est refusé proprement plutôt que de lever une exception.
@@ -461,6 +515,16 @@ async function historyTests() {
   const shared = JSON.parse(call('GET /api/share.json'));
   assert.strictEqual(shared.historyPoints, imp.points, "le nombre de points d'ébauche part avec la polaire");
   assert.ok(shared.points >= imp.points);
+  // D'où vient le verdict « pas au moteur », point par point. Le faux bord
+  // publie `state` ET `revolutions`, donc les points pris en direct sont en
+  // `state+rpm` ; l'ébauche tirée de l'historique n'a aucun témoin moteur.
+  assert.ok(shared.engineSources && typeof shared.engineSources === 'object', 'la polaire partagée dit sur quoi repose le verdict moteur');
+  assert.ok(shared.engineSources['state+rpm'] > 0, `engineSources: ${JSON.stringify(shared.engineSources)}`);
+  assert.strictEqual(
+    Object.values(shared.engineSources).reduce((a, b) => a + b, 0),
+    shared.totalPoints,
+    'chaque point est attribué à exactement une source'
+  );
   // Et le partage ignore le réglage d'affichage : ce qu'on reverse est ce que
   // la carte Share montre, pas ce qu'on regarde à l'écran.
   assert.strictEqual(JSON.parse(call('GET /api/share.json', { history: '0' })).historyPoints, imp.points);

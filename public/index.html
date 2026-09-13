@@ -35,6 +35,10 @@
     <button class="act" id="btnReload" title="Reload everything and re-centre the wind bands on the wind right now">refresh</button>
   </div>
   <span class="sub" id="headSub">automatic learning</span>
+  <!-- Une ligne, jamais un bandeau, jamais un modal : l'appstore SignalK dit
+       déjà la même chose, mais personne n'y va sans raison — alors que cette
+       page-ci est ouverte en nav. Elle ne met rien à jour toute seule. -->
+  <div class="hint" id="updateNote" hidden></div>
 </header>
 
 <!-- Un coup de pouce. Jamais un modal, jamais au chargement : le bandeau
@@ -168,6 +172,14 @@
       <h2>Speed sensor check <span class="sub">— is STW telling the truth?</span></h2>
       <div id="speedo"><div class="empty">Not enough data yet.</div></div>
     </section>
+
+    <!-- La moitié vide d'un diagramme n'est presque jamais un défaut de
+         collecte : c'est la nav qu'on a faite. Le bandeau de qualité dit qu'il
+         manque des cases, celui-ci dit pourquoi. -->
+    <section class="card" id="cardHabits">
+      <h2>How you sail <span class="sub">— the points your polar is made of</span></h2>
+      <div id="habits"><div class="empty">Not enough data yet.</div></div>
+    </section>
   </div>
 
   <div>
@@ -220,6 +232,11 @@
         <button class="act" id="btnJson">JSON backup</button>
         <button class="act" id="btnRaw">Raw log (.jsonl)</button>
       </div>
+      <!-- « SOG ou STW ? » n'a pas de réponse fixe : elle dépend des boutons
+           du haut de la page, et une fois le fichier téléchargé plus rien ne
+           la rappelle — un .pol est une matrice nue. On l'écrit donc ici,
+           avant le clic, et dans le nom du fichier, après. -->
+      <div class="hint" id="exportHint"></div>
       <div class="row-actions" id="pmRow" hidden>
         <button class="act" id="btnSendPM">Send to Polar Management Plugin</button>
         <span class="msg" id="pmMsg"></span>
