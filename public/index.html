@@ -97,6 +97,16 @@
             <button data-v="true">true</button><button data-v="apparent">apparent</button>
           </div>
         </div>
+        <!-- Le repère dans lequel l'angle du vent est lu. « over ground »
+             retire la dérive du bateau : c'est l'angle qu'on fait vraiment,
+             pas celui qu'on barre. Le groupe disparaît tant que la dérive n'a
+             pas été mesurée — un bouton qui ne change rien est pire qu'absent. -->
+        <div class="group" id="angleGroup" hidden>
+          <label>Wind angle</label>
+          <div class="seg" data-key="angle" title="Read the wind angle from the boat's axis, or from the track it actually makes over the ground">
+            <button data-v="water">through water</button><button data-v="ground">over ground</button>
+          </div>
+        </div>
         <div class="group">
           <label>Value</label>
           <div class="seg" data-key="stat">
@@ -171,6 +181,14 @@
     <section class="card" id="cardSpeedo">
       <h2>Speed sensor check <span class="sub">— is STW telling the truth?</span></h2>
       <div id="speedo"><div class="empty">Not enough data yet.</div></div>
+    </section>
+
+    <!-- La dérive. Juste après le speedo, parce que c'est le même geste :
+         séparer ce qui vient du bateau de ce qui vient de la mer, en se
+         servant d'une symétrie que seule la nav peut fournir. -->
+    <section class="card" id="cardLeeway">
+      <h2>Leeway <span class="sub">— the gap between where you point and where you go</span></h2>
+      <div id="leeway"><div class="empty">Not enough data yet.</div></div>
     </section>
 
     <!-- La moitié vide d'un diagramme n'est presque jamais un défaut de

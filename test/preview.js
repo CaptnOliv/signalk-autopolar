@@ -144,7 +144,17 @@ if (!fs.existsSync(runsFile)) {
       sog: +sog.toFixed(2), stw: +stw.toFixed(2),
       twa: +twa.toFixed(1), tws: +tws.toFixed(2),
       awa: +((awaRad * 180) / Math.PI).toFixed(1), aws: +aws.toFixed(2),
-      hdg: +(rnd() * 360).toFixed(1), cog: 0, roll: twa > 0 ? 12 : -12,
+      // Cap et route fond cohérents : le bateau de l'aperçu dérive comme un
+      // vrai (5-6° au près, rien au portant, du bon côté selon l'amure),
+      // sinon la carte Leeway de l'aperçu montre « pas assez de données » et
+      // les captures d'écran ne montrent pas ce que l'app fait en nav.
+      ...(() => {
+        const hdg = rnd() * 360;
+        const lee = Math.max(0, 6 - Math.abs(twa) / 20);
+        const cog = (hdg + (twa < 0 ? lee : -lee) + noise(0.8) + 360) % 360;
+        return { hdg: +hdg.toFixed(1), cog: +cog.toFixed(1), hdgSrc: 'true' };
+      })(),
+      roll: twa > 0 ? 12 : -12,
       engineSource: 'rpm', sail: sails[i % 20 === 0 ? 1 : 0],
       metrics: { hdgSpread: 4, twsSpread: 1.1 },
     });

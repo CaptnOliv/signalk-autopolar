@@ -4,7 +4,8 @@
 
 Everything lives in the plugin configuration, laid out in three tiers. **Data
 sources**, at the top, lists the SignalK path read for each of SOG, STW,
-apparent/true wind, heading, rate of turn, navigation state and attitude — the
+apparent/true wind, heading, magnetic variation, rate of turn, navigation state
+and attitude — the
 defaults match a standard installation, so only touch this if your boat
 publishes one of them somewhere else (a derived-data plugin under a different
 key, a wind instrument with apparent wind only, and so on). The middle of the
@@ -16,6 +17,13 @@ there are the ones worth understanding if you do go in: on autopilot, 10-15°
 of heading variation; hand steering in a swell, more like 20-25°. When in
 doubt, collect wide and **replay the raw log** afterwards with tighter
 thresholds — the operation is reversible as many times as you like.
+
+`variationPath` is only read when the true heading is missing: a raw magnetic
+heading is off by the local variation, which would land whole in the leeway
+measurement (course over ground minus heading). With the variation published,
+the plugin applies it and the points count normally; without it, they are
+dropped from the leeway analysis rather than silently corrected. See
+[Leeway](leeway.md).
 
 `publishPerformance` is left off until the polar has proved itself, and should
 stay off if another polar plugin is installed: they would all write to the same

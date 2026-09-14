@@ -52,7 +52,9 @@ const fakeApp = {
       'environment.wind.angleApparent': world.awa * D2R,
       'environment.wind.speedTrue': world.tws * KN,
       'environment.wind.angleTrueWater': world.twa * D2R,
-      'navigation.courseOverGroundTrue': world.hdg * D2R,
+      // La route fond, distincte du cap quand le monde le demande : c'est
+      // l'écart entre les deux qui porte toute la mesure de dérive.
+      'navigation.courseOverGroundTrue': (world.cog == null ? world.hdg : world.cog) * D2R,
       'navigation.headingTrue': world.hdg * D2R,
       'navigation.rateOfTurn': (world.rot || 0) * D2R,
       'navigation.state': world.navState,
@@ -93,6 +95,11 @@ function run(seconds, f) {
   }
 }
 
+// Au près le bateau dérive : 5° sous le vent de son cap, du côté opposé à
+// celui d'où vient le vent. Tribord amure (twa > 0, vent de droite) la route
+// part à gauche du cap, bâbord amure à droite — c'est ce basculement que
+// lib/leeway.js exploite pour séparer la dérive du courant.
+const LEEWAY = 5;
 const closeHauled = (hdg, twa) => (i) => ({
   sog: 6.4 + noise(0.25),
   stw: 6.1 + noise(0.25),
@@ -101,6 +108,7 @@ const closeHauled = (hdg, twa) => (i) => ({
   tws: 12 + noise(0.4),
   twa: twa + noise(3),
   hdg: hdg + noise(3),
+  cog: hdg + (twa > 0 ? -LEEWAY : LEEWAY) + noise(3),
   rot: noise(0.5),
   roll: twa > 0 ? 14 : -14,
   rpm: 0,
@@ -293,6 +301,88 @@ assert.strictEqual(sup.ask, false, 'rien à remercier avant que la polaire serve
 assert.strictEqual(sup.links.kofi, 'https://ko-fi.com/captnoliv');
 call('POST /api/support/answer', {}, { outcome: 'never' });
 assert.strictEqual(call('GET /api/support').ask, false);
+
+// ── Dérive : de la mesure à la polaire lue sur le fond ────────────────────
+// Le monde de test dérive de 5° au près, du bon côté selon l'amure. La chaîne
+// entière doit donc retrouver ce chiffre, sans le confondre avec le courant
+// (il n'y en a pas ici : le biais doit tomber à zéro).
+{
+  const lw = call('GET /api/leeway');
+  assert.strictEqual(lw.verdict, 'ok', `verdict de dérive : ${lw.verdict}`);
+  assert.ok(lw.usable, 'la dérive mesurée doit être exploitable');
+  assert.ok(Math.abs(lw.upwind - 5) < 1.5, `5° de dérive attendus, obtenu ${lw.upwind}`);
+  assert.ok(Math.abs(lw.bias) < 1.5, `aucun courant dans ce monde, biais obtenu ${lw.bias}`);
+  assert.strictEqual(lw.magneticHeading, 0);
+
+  // La lecture « sur le fond » ouvre les angles : la même nav à 45° barrés se
+  // range autour de 50° une fois la dérive prise en compte.
+  const water = call('GET /api/polar', { min: '1', smooth: '0' });
+  const ground = call('GET /api/polar', { min: '1', smooth: '0', angle: 'ground' });
+  assert.strictEqual(water.angle, 'water');
+  assert.strictEqual(ground.angle, 'ground');
+  const angles = (p) =>
+    p.bins.find((b) => b.ws === 12).cells.filter((c) => c.n).map((c) => c.twa);
+  assert.ok(angles(water).includes(45), `cases eau : ${angles(water)}`);
+  assert.ok(Math.max(...angles(ground)) > Math.max(...angles(water)), 'la lecture fond ouvre les angles');
+
+  // Et la cible de VMG porte les deux angles, sans qu'on ait à changer de vue.
+  const t = water.bins.find((b) => b.ws === 12).targets.upwind;
+  assert.ok(t.twaGround > t.twa && t.vmgGround < t.vmg, 'cible annotée de son équivalent sur le fond');
+
+  // Le repère du moment doit être lu dans le MÊME repère que la courbe
+  // affichée. Sinon on compare la vitesse tenue à 45° barrés à la case 45°
+  // d'une polaire où cette case décrit un bateau qui ne dérive pas : l'écart
+  // affiché serait faux de toute la dérive, sans que rien ne le signale.
+  // Une seule seconde de près, sans bruit : de quoi poser l'état courant sans
+  // fabriquer un point de plus. Le bruit est retiré exprès — un point retenu
+  // est une médiane sur 60 s, alors qu'ici on lit une seconde, où ±3° de bruit
+  // sur le cap ET sur la route noieraient les 5° qu'on veut voir.
+  // Tribord amure (vent de droite) : la route part à gauche du cap.
+  run(1, () => ({
+    sog: 6.4, stw: 6.1, aws: 15, awa: 32, tws: 12, twa: 45,
+    hdg: 100, cog: 100 - LEEWAY, rot: 0, roll: 14, rpm: 0, navState: 'sailing',
+  }));
+  const nowWater = call('GET /api/now', { min: '1' });
+  const nowGround = call('GET /api/now', { min: '1', angle: 'ground' });
+  assert.ok(nowWater.has && nowGround.has, 'un état courant exploitable');
+  assert.ok(Math.abs(nowWater.twa - Math.abs(nowWater.waSteered)) < 0.01, 'en lecture eau, angle affiché = angle barré');
+  assert.ok(Math.abs(Math.abs(nowWater.waSteered) - 45) < 0.01, 'on barre bien 45°');
+  assert.ok(
+    Math.abs(nowGround.twa - (45 + LEEWAY)) < 1.5,
+    `en lecture fond, l'angle du moment s'ouvre de la dérive : ${nowGround.waSteered} barrés → ${nowGround.twa}`
+  );
+  assert.ok(Math.abs(nowGround.vmgGround) <= Math.abs(nowGround.vmg) + 1e-9, 'la VMG sur le fond ne dépasse jamais l\'autre');
+}
+
+// ── Ce qui part vraiment dans le fonds commun ─────────────────────────────
+// La charge utile se verrouille champ par champ, comme celle du ping : c'est
+// ce qui oblige à mettre à jour la description de l'option quand on ajoute
+// quelque chose, au lieu de l'élargir en silence.
+{
+  const pay = JSON.parse(call('GET /api/share.json'));
+  assert.strictEqual(pay.schema, 1);
+  assert.strictEqual(pay.speed, 'sog');
+  assert.strictEqual(pay.stat, 'median');
+
+  // Les deux lectures de vitesse voyagent ensemble : aucune des deux ne se
+  // suffit (la SOG porte le courant, la STW porte l'erreur du capteur).
+  const cells = pay.bins.flatMap((b) => b.cells);
+  assert.ok(cells.length, 'des cases dans la charge utile');
+  assert.ok(cells.some((c) => c.stw != null && c.nStw > 0), 'la lecture STW accompagne la lecture SOG');
+
+  // Et de quoi les départager : le verdict du speedo et la dérive mesurée.
+  assert.ok(pay.leeway && pay.leeway.verdict === 'ok', 'la dérive part avec la polaire');
+  assert.ok(pay.leeway.curve.length, 'la courbe de dérive aussi');
+  assert.ok(pay.speedo && typeof pay.speedo.gain === 'number', 'le verdict du speedo part avec');
+
+  // Rien qui dise OÙ le bateau navigue. Le biais de dérive (courant + compas)
+  // et la direction du courant implicite restent à bord : ils décrivent
+  // l'endroit, pas le bateau. On le vérifie sur le texte sérialisé, seule
+  // façon de ne pas dépendre de la forme de l'objet.
+  const txt = JSON.stringify(pay);
+  for (const forbidden of ['bias', 'latitude', 'longitude', 'position', 'meanAbsDir', 'meanRelDir', 'earthFrame'])
+    assert.ok(!txt.includes(forbidden), `« ${forbidden} » ne doit pas quitter le bateau`);
+}
 
 // Tag de voilure.
 call('POST /api/sail', {}, { main: '1ris', head: 'genoa' });

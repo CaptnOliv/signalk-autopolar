@@ -25,6 +25,11 @@ sail a single test run.
   calibration error, with a ready-to-use correction table for the Airmar
   DST810 and similar instruments. → [Is your speed sensor telling the
   truth?](docs/speedo.md)
+- 🔥 **Leeway measured, and taken off the VMG.** Pointing 35° while sliding 8°
+  sideways makes 43° over the ground. The gap between heading and course over
+  ground is split into leeway (flips sign when you tack) and current plus
+  compass error (does not), so the polar can be read against the track the boat
+  actually makes. → [Leeway](docs/leeway.md)
 - 🔥 **VMG targets with the cost of leaving them.** The neighbouring angles
   either side of the optimum, in knots and in percent, so you know whether
   holding the angle is worth it. → [VMG targets](docs/vmg.md)
@@ -49,8 +54,8 @@ sail a single test run.
   [Web app tour](docs/webapp.md), [Polar Management
   hand-off](docs/polar-management.md)
 - 🔥 **Free, and the polar goes back into a shared pool** — automatically,
-  every 500 points, no position ever collected. →
-  [Sharing your polar](docs/sharing.md)
+  every 500 points, no position ever collected, both speed readings and what
+  is needed to tell them apart. → [Sharing your polar](docs/sharing.md)
 - 🔥 **Tells you when it is stuck.** A ntfy alert if sailing goes on for 20 min
   with nothing kept, with the dominant rejection reasons. →
   [Idle alert](docs/idle-alert.md)

@@ -242,6 +242,10 @@ table.targets td.a { white-space: nowrap; }
 table.targets .k { color: var(--muted); }
 table.targets .vmg { color: var(--ink-2); margin-left: 6px; }
 table.targets .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+/* La route sur le fond, sous l'angle barré : deuxième ligne et non deuxième
+   colonne, pour que la lecture reste « voilà l'angle, et voilà ce qu'il donne
+   vraiment » plutôt que deux chiffres concurrents sur la même ligne. */
+table.targets .ground { display: block; margin-top: 2px; font-size: 11px; }
 
 /* Ce que le filtre voit de la fenêtre en cours. Dérive et dispersion sont
    affichées côte à côte parce que c'est leur écart qui explique une décision :

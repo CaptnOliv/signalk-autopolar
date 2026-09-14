@@ -26,6 +26,7 @@ const polarLib = require('./lib/polar');
 const { createStore } = require('./lib/store');
 const { createNotifier } = require('./lib/notify');
 const speedo = require('./lib/speedo');
+const leewayLib = require('./lib/leeway');
 const sailchange = require('./lib/sailchange');
 const { createShare } = require('./lib/share');
 const { createSupport } = require('./lib/support');
@@ -124,6 +125,13 @@ module.exports = function (app) {
             description: 'Used only when the true heading above is stale.',
             default: 'navigation.headingMagnetic',
           },
+          variationPath: {
+            type: 'string',
+            title: 'Magnetic variation',
+            description:
+              'Added to the magnetic heading when the true heading is missing. Without it a magnetic heading is off by the local variation, which would land straight in the leeway measurement (course over ground minus heading).',
+            default: 'navigation.magneticVariation',
+          },
           rotPath: { type: 'string', title: 'Rate of turn', default: 'navigation.rateOfTurn' },
           navStatePath: { type: 'string', title: 'Navigation state', default: 'navigation.state' },
           attitudePath: {
@@ -180,7 +188,7 @@ module.exports = function (app) {
         type: 'boolean',
         title: 'Contribute my polar to the shared pool',
         description:
-          'This plugin is free and stays free. In exchange it sends the polar it has learned to a shared pool, on its own, every few hundred new points — nothing to click, nothing to remember. Only the polar, the boat model and the name above leave the boat: no position, no track, no raw log. It also says how the engine-off check was made for those points (measured state, RPM, or a declaration), because a polar nobody can second-guess is a polar nobody can trust. If you have drafted a polar from the server history store, those points count in the shared polar too, and the payload says how many of them there are. The exact payload is readable at any time in the webapp, under Share. Turning this off leaves the plugin fully working; it just stops the pool from growing.',
+          'This plugin is free and stays free. In exchange it sends the polar it has learned to a shared pool, on its own, every few hundred new points — nothing to click, nothing to remember. What leaves the boat is the polar, the boat model and the name above — no position, no track, no raw log, and nothing that says where you sail. The polar goes out twice over, read in speed over ground and in speed through water: they are two readings of the same points, and neither is trustworthy on its own (GPS speed carries the current, water speed carries whatever the paddle wheel gets wrong). So the payload also carries what is needed to tell them apart: the speed-sensor verdict (does the gap follow the boat or the sea, and by how much), and the leeway measured from the difference between course over ground and heading. Current direction and compass bias stay on board — they describe where you are, not what your boat does. It also says how the engine-off check was made for those points (measured state, RPM, or a declaration), because a polar nobody can second-guess is a polar nobody can trust. If you have drafted a polar from the server history store, those points count in the shared polar too, and the payload says how many of them there are. The exact payload is readable at any time in the webapp, under Share. Turning this off leaves the plugin fully working; it just stops the pool from growing.',
         default: true,
       },
       shareEveryPoints: {
@@ -459,8 +467,26 @@ module.exports = function (app) {
     let tws = num(opts.twsPath, kn);
     let twa = num(opts.twaPath, (v) => wrap180(deg(v)));
     const cog = num(opts.cogPath, deg);
+    // La provenance du cap n'est pas un détail comptable : elle décide de ce
+    // qu'on a le droit de faire de l'écart `cog - hdg`. Un cap magnétique brut
+    // est décalé de la déclinaison locale (jusqu'à 15° sous certaines
+    // latitudes), qui irait tout entière dans la dérive mesurée. On applique
+    // donc la déclinaison quand le serveur la publie, et on marque le point
+    // quand on ne peut pas — lib/leeway.js écarte alors ces points-là plutôt
+    // que de mélanger deux références dans le même corpus.
     let hdg = num(opts.headingTruePath, deg);
-    if (!hdg.fresh) hdg = num(opts.headingMagPath, deg);
+    let hdgSrc = hdg.fresh ? 'true' : null;
+    if (!hdgSrc) {
+      const mag = num(opts.headingMagPath, deg);
+      const varn = num(opts.variationPath, deg);
+      if (mag.fresh && varn.fresh && typeof varn.v === 'number') {
+        hdg = { v: wrap180(mag.v + varn.v), fresh: true, age: mag.age };
+        hdgSrc = 'variation';
+      } else {
+        hdg = mag;
+        hdgSrc = mag.fresh ? 'magnetic' : null;
+      }
+    }
     const rot = num(opts.rotPath, deg);
 
     // Vent vrai : on préfère celui du serveur (signalk-derived-data résout
@@ -489,6 +515,7 @@ module.exports = function (app) {
       twa: twa.v,
       tws: tws.v,
       hdg: hdg.v,
+      hdgSrc,
       cog: cog.v,
       ...(() => {
         const a = read(opts.attitudePath);
@@ -598,6 +625,12 @@ module.exports = function (app) {
         twa: r2(snap.twa),
         tws: r2(snap.tws),
         hdg: r2(snap.hdg),
+        // Provenance du cap, écrite SEULEMENT quand ce n'est pas un cap vrai.
+        // Le brut coûte 15 Mo par 30 h ; un champ constant sur chaque ligne
+        // en ajouterait 3 pour ne rien dire. Absent = cap vrai, et c'est la
+        // seule convention implicite de ce fichier — elle est relue telle
+        // quelle dans rebuild().
+        ...(snap.hdgSrc && snap.hdgSrc !== 'true' ? { hs: snap.hdgSrc } : {}),
         cog: r2(snap.cog),
         roll: r2(snap.roll),
         pit: r2(snap.pitch),
@@ -707,6 +740,8 @@ module.exports = function (app) {
         awa: snap.awa,
         aws: snap.aws,
         hdg: snap.hdg,
+        hdgSrc: snap.hdgSrc,
+        cog: snap.cog,
         roll: snap.roll,
         pitch: snap.pitch,
         navState: snap.navState,
@@ -846,6 +881,17 @@ module.exports = function (app) {
     return speedoCache.value;
   }
 
+  // Même raison, même forme : le modèle de dérive est relu à chaque requête de
+  // polaire (c'est lui qui donne l'angle sur le fond), et il parcourt tous les
+  // points. Sans mémo on le recalculerait plusieurs fois par seconde en nav.
+  let leewayCache = { key: null, value: null };
+  function leewayAnalysis() {
+    const runs = store.runs();
+    const key = `${runs.length}|${runs.length ? runs[runs.length - 1].id : 0}|${store.excluded().size}`;
+    if (leewayCache.key !== key) leewayCache = { key, value: leewayLib.analyse(runs) };
+    return leewayCache.value;
+  }
+
   // ── Options de calcul issues d'une requête HTTP ────────────────────────────
   function polarOpts(q) {
     // 'stwc' = vitesse surface corrigée par la courbe mesurée. C'est une
@@ -857,8 +903,18 @@ module.exports = function (app) {
       stwCal: speedMode === 'stwc' ? speedoAnalysis().curve : null,
       vmgOffsets: opts.vmgOffsetsDeg,
       wind: q.wind === 'apparent' ? 'apparent' : 'true',
+      // L'angle du vent, lu par rapport à l'axe du bateau ou à la route sur le
+      // fond. Le modèle de dérive part TOUJOURS, même en lecture 'water' :
+      // c'est lui qui permet d'annoter les cibles de VMG de leur équivalent
+      // sur le fond, qui est la seule chose qu'on gagne vraiment en tirant un
+      // bord. Sans mesure exploitable, lib/polar.js retombe tout seul sur
+      // l'angle mesuré et le dit dans `angle` / `angleAsked`.
+      angle: q.angle === 'ground' ? 'ground' : 'water',
+      leeway: leewayAnalysis(),
       tack: ['port', 'starboard', 'merged'].includes(q.tack) ? q.tack : 'merged',
-      stat: ['mean', 'median', 'p90', 'max'].includes(q.stat) ? q.stat : 'mean',
+      // La médiane par défaut, comme le partage : la polaire qu'on regarde
+      // doit être celle qu'on envoie. Voir DEFAULTS dans lib/polar.js.
+      stat: ['mean', 'median', 'p90', 'max'].includes(q.stat) ? q.stat : 'median',
       twsBins: q.bins ? String(q.bins).split(',').map(Number).filter((n) => !isNaN(n)) : opts.twsBins,
       twaStep: q.step ? Number(q.step) : opts.twaStep,
       minSamples: q.min ? Number(q.min) : opts.minSamples,
@@ -959,6 +1015,13 @@ module.exports = function (app) {
         twa: s.twa,
         tws: s.tws,
         hdg: s.hdg,
+        // Absent = cap vrai (voir l'écriture ci-dessus). Les brut d'avant
+        // cette version n'ont pas le champ : ils sont donc relus comme des
+        // caps vrais. Sur un bateau qui n'aurait eu que du magnétique, la
+        // déclinaison se retrouve alors dans le biais commun de lib/leeway.js,
+        // qui est justement fait pour absorber une constante — la dérive
+        // mesurée reste juste, seul le biais n'est plus interprétable.
+        hdgSrc: s.hs || (s.hdg != null ? 'true' : null),
         cog: s.cog,
         roll: s.roll,
         pitch: s.pit,
@@ -1229,8 +1292,35 @@ module.exports = function (app) {
   // SOG parce que c'est la seule vitesse qu'aucun capteur mal calibré ne
   // fausse — voir lib/speedo.js.
   function shareBundle() {
-    const polar = polarLib.buildPolar(store.runs(), polarOpts({ shared: '1', speed: 'sog', wind: 'true', stat: 'median' }));
+    const shareOpts = polarOpts({ shared: '1', speed: 'sog', wind: 'true', angle: 'water', stat: 'median' });
+    const polar = polarLib.buildPolar(store.runs(), shareOpts);
     const runs = store.runs();
+
+    // La même polaire lue en vitesse surface, recollée case par case.
+    //
+    // Pourquoi les deux plutôt que l'une : l'axe canonique reste la SOG, parce
+    // que c'est la seule vitesse que tout le monde a et qu'aucun capteur mal
+    // calibré ne fausse. Mais la SOG porte le courant, et un corpus où l'on
+    // ignore d'où viennent les points finit par apprendre les courants de la
+    // Manche autant que la forme des coques. La STW, elle, est dans le même
+    // repère que l'angle du vent — donc juste par construction — mais elle
+    // dépend d'une roue à aubes qu'on ne peut pas vérifier à distance.
+    //
+    // Aucune des deux ne gagne dans l'absolu : on envoie les deux lectures des
+    // MÊMES points, plus de quoi juger le capteur (verdict du speedo) et de
+    // quoi juger la dérive. Le collecteur tranche avec l'information sous les
+    // yeux, ce que le bateau ne peut pas faire tout seul.
+    const stwPolar = polarLib.buildPolar(store.runs(), Object.assign({}, shareOpts, { speed: 'stw' }));
+    for (const bin of polar.bins) {
+      const alt = stwPolar.bins.find((b) => b.ws === bin.ws);
+      if (!alt) continue;
+      for (const cell of bin.cells) {
+        const a = alt.cells.find((c) => c.twa === cell.twa);
+        if (!a || a.value == null) continue;
+        cell.stw = a.value;
+        cell.nStw = a.n;
+      }
+    }
     const declared = runs.filter((r) => r.engineSource === 'declared').length;
     // Sur quoi repose la décision « ce bateau n'était pas au moteur », point
     // par point. Sans ça, une polaire reçue ne se relit pas : une case à
@@ -1288,6 +1378,30 @@ module.exports = function (app) {
       speed: 'sog',
       wind: 'true',
       stat: 'median',
+      // Ce qui permet de relire les deux lectures de vitesse sans rien
+      // supposer : le verdict du speedo (le gap suit-il le bateau ou la mer ?)
+      // et la dérive mesurée. La DIRECTION du courant implicite ne part pas —
+      // elle dit où le bateau navigue, et rien ici ne doit dire où il navigue.
+      // Le biais commun de la dérive ne part pas non plus, pour la même
+      // raison : on partage ce qui appartient au bateau, pas à l'endroit.
+      speedo: (() => {
+        const a = speedoAnalysis();
+        if (!a || !a.n) return null;
+        return { verdict: a.diagnosis.verdict, gain: a.gain, rmse: a.gainRmse, n: a.n };
+      })(),
+      leeway: (() => {
+        const l = leewayAnalysis();
+        if (!l || !l.n) return null;
+        return {
+          verdict: l.verdict,
+          upwind: l.upwind,
+          n: l.n,
+          curve: l.curve.map((c) => ({ twa: c.twa, leeway: c.leeway, n: c.n })),
+          bands: l.bands
+            .filter((b) => b.both)
+            .map((b) => ({ from: b.from, to: b.to, leeway: b.leeway, se: b.se, n: b.n })),
+        };
+      })(),
     };
     return { polar, info };
   }
@@ -1337,7 +1451,20 @@ module.exports = function (app) {
       pol: polarLib.toPol(polar),
       bins: polar.bins.map((b) => ({
         tws: b.ws,
-        cells: b.cells.map((c) => (c.n ? { twa: c.twa, v: c.value, n: c.n } : null)).filter(Boolean),
+        cells: b.cells
+          .map((c) =>
+            c.n
+              ? Object.assign(
+                  { twa: c.twa, v: c.value, n: c.n },
+                  // La même case lue en vitesse surface, quand le bateau a un
+                  // speedo. Deux lectures des mêmes points : le collecteur peut
+                  // reconstruire l'une ou l'autre polaire, ou comparer les deux
+                  // pour voir si ce bateau a navigué dans du courant.
+                  c.stw != null ? { stw: c.stw, nStw: c.nStw } : {}
+                )
+              : null
+          )
+          .filter(Boolean),
       })),
     });
   }
@@ -1450,7 +1577,7 @@ module.exports = function (app) {
     const polarCached = (o) => {
       const runs = store.runs();
       const key = JSON.stringify([
-        o.speed, o.wind, o.tack, o.stat, o.twsBins, o.twaStep, o.minSamples, o.smooth, o.sail, o.excludeDeclared,
+        o.speed, o.wind, o.angle, o.tack, o.stat, o.twsBins, o.twaStep, o.minSamples, o.smooth, o.sail, o.excludeDeclared,
         runs.length, runs.length ? runs[runs.length - 1].id : 0, store.overrides(), [...store.excluded()].length,
       ]);
       if (polarCache.key !== key) polarCache = { key, value: polarLib.buildPolar(runs, o) };
@@ -1483,10 +1610,17 @@ module.exports = function (app) {
       const speedFresh = o.speed === 'sog' ? !!f.sog : !!f.stw;
       const has = typeof ws === 'number' && typeof wa === 'number' && typeof speed === 'number';
       const polar = has ? polarCached(o) : null;
-      const ref = polar ? polarLib.referenceAt(polar, ws, wa) : null;
+      // L'angle du moment, lu dans le MÊME repère que la courbe. En lecture
+      // fond, les cases sont indexées par l'angle sur le fond : y chercher le
+      // repère à l'angle barré, ce serait comparer la vitesse tenue à 40° à la
+      // case 40° d'une courbe où cette case est celle d'un bateau qui ne dérive
+      // pas. L'écart affiché serait faux de toute la dérive.
+      const gwa = has && !apparent && polar && polar.angle === 'ground' ? leewayLib.groundTwa(v, o.leeway) : null;
+      const refWa = gwa != null ? gwa : wa;
+      const ref = polar ? polarLib.referenceAt(polar, ws, refWa) : null;
       const bin = has ? polarLib.findWindBin(polarLib.windBinEdges(o.twsBins), ws) : null;
       const binPolar = bin && polar ? polar.bins.find((b) => b.ws === bin.ws) : null;
-      const rad = has ? (Math.abs(wrap180(wa)) * Math.PI) / 180 : 0;
+      const rad = has ? (Math.abs(wrap180(refWa)) * Math.PI) / 180 : 0;
       res.json({
         ts: live.ts,
         reason: live.reason,
@@ -1499,8 +1633,13 @@ module.exports = function (app) {
         fresh: has && windFresh && speedFresh,
         speed,
         ws,
-        wa: has ? wrap180(wa) : null,
-        twa: has ? Math.abs(wrap180(wa)) : null,
+        // L'angle affiché — et donc la position du marqueur sur le diagramme —
+        // est celui du repère affiché, sinon le point se poserait à côté de la
+        // courbe qu'il est censé commenter. `waSteered` garde l'angle barré :
+        // c'est celui qu'on lit sur l'instrument du bord.
+        wa: has ? wrap180(refWa) : null,
+        twa: has ? Math.abs(wrap180(refWa)) : null,
+        waSteered: has ? wrap180(wa) : null,
         tack: has ? (wrap180(wa) < 0 ? 'port' : 'starboard') : null,
         bin,
         ref,
@@ -1510,6 +1649,25 @@ module.exports = function (app) {
         ratio: ref && ref.value ? speed / ref.value : null,
         vmg: has ? speed * Math.cos(rad) : null,
         refVmg: ref ? ref.value * Math.cos(rad) : null,
+        // La même VMG, mais dans le repère où l'on arrive quelque part.
+        // C'est le chiffre qui tranche entre pincer et abattre : sur Jazzy il
+        // est 8 % en dessous de l'autre, et l'écart grandit quand on pince.
+        // Le biais commun (courant du jour, erreur de compas) est retiré comme
+        // dans la polaire, sinon la comparaison avec la référence ne tiendrait
+        // pas. L'écart brut route/cap part à côté, lui, tel qu'il est mesuré.
+        ...(() => {
+          const model = o.leeway;
+          const off = leewayLib.offsetOf(v);
+          const g = has && !apparent ? leewayLib.groundTwa(v, model) : null;
+          if (g == null) return { offset: off, twaGround: null, vmgGround: null, refVmgGround: null };
+          const gr = (Math.abs(wrap180(g)) * Math.PI) / 180;
+          return {
+            offset: off,
+            twaGround: Math.abs(wrap180(g)),
+            vmgGround: speed * Math.cos(gr),
+            refVmgGround: ref ? ref.value * Math.cos(gr) : null,
+          };
+        })(),
         // La cible de VMG de la bande de vent du moment : savoir qu'on tient
         // 94 % de la polaire ne dit pas si on la tient au bon angle.
         targets: binPolar ? binPolar.targets : null,
@@ -1558,6 +1716,8 @@ module.exports = function (app) {
     // Diagnostic speedo : STW contre SOG, et surtout laquelle des deux causes
     // possibles explique l'écart (voir lib/speedo.js).
     router.get('/api/speedo', (req, res) => res.json(speedoAnalysis()));
+
+    router.get('/api/leeway', (req, res) => res.json(leewayAnalysis()));
 
     // Les mêmes points au format du journal de
     // airmar-dst810-auto-calibration, à concaténer à son runs.jsonl : nos
@@ -1879,7 +2039,12 @@ module.exports = function (app) {
     // le format .pol est une matrice nue et rien d'autre.
     function exportName(polar, ext) {
       const boat = String(opts.shareName || 'polar').replace(/[^A-Za-z0-9_-]+/g, '-') || 'polar';
-      return `${boat}-${polar.speed}-${polar.wind}-${polar.stat}.${ext}`;
+      // Le repère entre dans le nom quand ce n'est pas l'angle mesuré. Le .pol
+      // n'accepte aucun commentaire, donc pour lui c'est la SEULE trace : des
+      // angles « sur le fond » chargés dans un routeur comme des angles de
+      // barre seraient faux de toute la dérive, sans rien pour le signaler.
+      const frame = polar.angle === 'ground' ? '-groundangle' : '';
+      return `${boat}-${polar.speed}-${polar.wind}${frame}-${polar.stat}.${ext}`;
     }
     // setHeader plutôt que la méthode `set` d'Express : elle existe sur la
     // réponse HTTP native, donc la route marche aussi hors serveur SignalK
@@ -2053,6 +2218,7 @@ module.exports = function (app) {
         cogPath: 'navigation.courseOverGroundTrue',
         headingTruePath: 'navigation.headingTrue',
         headingMagPath: 'navigation.headingMagnetic',
+        variationPath: 'navigation.magneticVariation',
         rotPath: 'navigation.rateOfTurn',
         navStatePath: 'navigation.state',
         attitudePath: 'navigation.attitude',

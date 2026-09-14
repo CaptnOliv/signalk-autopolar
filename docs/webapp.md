@@ -46,7 +46,8 @@ metadata and serves only the API (`/api/...`).
   on the same server — see [Polar Management hand-off](polar-management.md).
 
   **What is in the file is what the diagram shows** — SOG or STW, true or
-  apparent wind, mean or median, smoothed or raw, sail-plan filter included.
+  apparent wind, wind angle through the water or over the ground, median or
+  mean, smoothed or raw, sail-plan filter included.
   There is no fixed answer to "is this polar in SOG or STW?"; it is whichever
   button was pressed. That matters: on a boat whose paddlewheel over-reads by
   10 %, the same polar exported twice five minutes apart gives two files that

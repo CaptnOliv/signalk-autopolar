@@ -38,9 +38,30 @@ a design helps nobody, including you. Sharing itself is on by default and can
 be switched off in the same place; the plugin then works exactly as before, and
 only the pool stops growing.
 
-What is sent is fixed — speed over ground, true wind, median per cell — so that
-polars from different boats can be compared, and your display settings never
-change it. Points recorded on a "sailing" declaration are left out: nobody else
+What is sent is fixed — true wind, median per cell, wind angle as measured from
+the boat's axis — so that polars from different boats can be compared, and your
+display settings never change it.
+
+**Both speed readings go, not one.** The canonical axis stays speed over
+ground, because it is the only speed every boat has and no paddlewheel can
+falsify it. But SOG carries the current with it, and a corpus that never knows
+where its points came from ends up learning the tides of the Channel as much as
+the shape of hulls. Speed through the water has the opposite problem: it is in
+the same frame as the wind angle, so it is right by construction, and it
+depends on a sensor nobody can check from a distance. Neither wins outright, so
+each cell carries **both readings of the same points**, each with its own count.
+
+Which is only useful with the means to tell them apart, so the payload also
+carries:
+
+- **the speed-sensor verdict** — does the gap between STW and SOG follow the
+  boat or the sea, and by how much ([how that is decided](speedo.md));
+- **the measured leeway** — by wind angle, with the number of points behind it
+  ([how that is measured](leeway.md)).
+
+What does *not* go: the direction of the implied current, and the common bias
+of the leeway (current plus compass error). Both describe **where** the boat
+sails. Only what belongs to the boat leaves the boat. Points recorded on a "sailing" declaration are left out: nobody else
 can check a declaration. The web app shows the whole payload at any time
 (**See exactly what is sent**), which is the point: a contribution you cannot
 read is one you end up switching off.

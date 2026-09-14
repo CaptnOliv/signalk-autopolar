@@ -18,7 +18,13 @@ const MAX_SERIES = 5;
 const ui = {
   speed: 'sog',
   wind: 'true',
-  stat: 'mean',
+  // L'angle du vent par rapport à l'axe du bateau ('water') ou à la route sur
+  // le fond ('ground', dérive déduite). Voir la carte Leeway.
+  angle: 'water',
+  // La médiane, pas la moyenne — et surtout : la même valeur que celle qui
+  // part dans le fonds commun. La polaire qu'on regarde doit être celle qu'on
+  // envoie, sinon on discute d'un chiffre que personne d'autre ne voit.
+  stat: 'median',
   tack: 'merged',
   compare: 'none',
   cloud: 'off',
@@ -320,7 +326,15 @@ function syncSail(s) {
 // ── Requêtes ────────────────────────────────────────────────────────────────
 function query(over) {
   const q = Object.assign(
-    { speed: ui.speed, wind: ui.wind, stat: ui.stat, min: '1', smooth: ui.smooth === 'on' ? '1' : '0', history: ui.history === 'on' ? '1' : '0' },
+    {
+      speed: ui.speed,
+      wind: ui.wind,
+      angle: ui.angle,
+      stat: ui.stat,
+      min: '1',
+      smooth: ui.smooth === 'on' ? '1' : '0',
+      history: ui.history === 'on' ? '1' : '0',
+    },
     over || {}
   );
   if (ui.tack !== 'split' && !(over && over.tack)) q.tack = 'merged';
@@ -572,6 +586,11 @@ function renderLegend(shown) {
   $('#legend').innerHTML = html;
   $('#plotSub').textContent =
     `— ${label(state.polar)}, ${{ mean: 'mean', median: 'median', p90: 'p90', max: 'max' }[ui.stat]} per cell · ${state.polar.used} points used` +
+    // En lecture fond, les points sans cap exploitable n'ont pas d'angle et
+    // sortent de la courbe. Deux courbes bâties sur des jeux de points
+    // différents ne se comparent pas en silence : le nombre se dit.
+    (state.polar.angle === 'ground' ? ' · angles over ground' : '') +
+    (state.polar.noAngle ? ` (${state.polar.noAngle} points left out, no usable heading)` : '') +
     (ui.sailFilter ? ` · ${sailLabel(ui.sailFilter)} only` : '');
 }
 
@@ -591,7 +610,19 @@ const hideTip = () => ($('#tip').style.opacity = 0);
 // ── Cibles VMG ──────────────────────────────────────────────────────────────
 function renderTargets() {
   if (!state.polar) return;
-  const cell = (x) => (x ? `<b>${fmt(x.twa, 0)}°</b> <span class="k">at ${fmt(x.speed, 2)} kn</span> <span class="vmg">VMG ${fmt(x.vmg, 2)}</span>` : '<span class="k">—</span>');
+  // La ligne porte l'angle qu'on barre ET celui qu'on fait. C'est toute la
+  // question : tenir 40° du vent pendant que le bateau glisse à 45° sur le
+  // fond ne vaut pas mieux que tenir 45° sans déraper, et la VMG affichée
+  // sans cette correction est surestimée d'à peu près la même proportion.
+  const cell = (x) => {
+    if (!x) return '<span class="k">—</span>';
+    const base = `<b>${fmt(x.twa, 0)}°</b> <span class="k">at ${fmt(x.speed, 2)} kn</span> <span class="vmg">VMG ${fmt(x.vmg, 2)}</span>`;
+    if (x.twaGround != null && x.leeway >= 0.5)
+      return `${base}<div class="k ground">over ground ${fmt(x.twaGround, 0)}° · VMG ${fmt(x.vmgGround, 2)} <span class="k">(${fmt(x.leeway, 1)}° leeway)</span></div>`;
+    if (x.twaWater != null && x.leeway >= 0.5)
+      return `${base}<div class="k ground">steer ${fmt(x.twaWater, 0)}° through the water</div>`;
+    return base;
+  };
   const shown = shownBins();
   const rows = state.polar.bins
     .filter((b) => shown.includes(b.ws) && (b.targets.upwind || b.targets.downwind))
@@ -784,7 +815,15 @@ function nowVmg(n) {
   if (!t) return '';
   const mine = Math.abs(n.vmg);
   const d = mine - t.vmg;
-  const vmg = ` · VMG <b>${fmt(mine, 2)}</b> ${up ? 'upwind' : 'downwind'}`;
+  // La VMG sur le fond juste à côté, quand elle est mesurable : c'est celle
+  // qui décide entre pincer et abattre, et elle est toujours la plus basse
+  // des deux. La montrer à part plutôt qu'à la place — l'autre reste celle
+  // qui se compare à la courbe.
+  const ground =
+    n.vmgGround != null && n.twaGround != null && Math.abs(n.twaGround - n.twa) >= 0.5
+      ? ` <span class="k">(${fmt(Math.abs(n.vmgGround), 2)} over ground, ${fmt(n.twaGround, 0)}°)</span>`
+      : '';
+  const vmg = ` · VMG <b>${fmt(mine, 2)}</b> ${up ? 'upwind' : 'downwind'}${ground}`;
   // Au largue on ne cherche pas à gagner au vent : on va quelque part. La
   // cible de VMG ne se compare que si on est déjà dans son voisinage,
   // sinon elle affiche une perte sur une route qu'on tient exprès.
@@ -1414,6 +1453,114 @@ async function refreshSpeedo() {
   $('#btnCalCsv').onclick = () => window.open(`${API}/api/speedo/calibration.csv`, '_blank');
 }
 
+// ── Dérive ──────────────────────────────────────────────────────────────────
+//
+// Même geste que le diagnostic du speedo : un écart mesuré (route fond moins
+// cap) mélange le bateau et l'endroit où il navigue, et seule une symétrie
+// permet de les séparer. Ici c'est la symétrie d'amure — la dérive change de
+// signe quand on vire, le courant et l'erreur de compas non.
+//
+// Le panneau montre donc les deux amures côte à côte AVANT le verdict : c'est
+// le sign flip qui fait la démonstration, pas le chiffre final.
+const LEEWAY_VERDICTS = {
+  ok: { cls: 'ok', title: 'Leeway measured' },
+  one_tack: {
+    cls: 'wait',
+    title: 'Only one tack so far',
+    why: 'Leeway cannot be told apart from current until the boat has sailed both tacks in the same conditions. Nothing is corrected until then.',
+  },
+  not_enough: { cls: 'wait', title: 'Not enough points yet', why: 'Keep sailing — this needs points on both tacks.' },
+  not_enough_upwind: {
+    cls: 'wait',
+    title: 'Not enough upwind sailing',
+    why: 'Downwind the boat barely makes leeway, so there is nothing to measure there. This needs legs close-hauled or reaching.',
+  },
+  inconsistent: {
+    cls: 'wait',
+    title: 'The two tacks do not agree',
+    why: 'The gap does not flip sign the way leeway should. Most likely a current that turned during the passage, or a heading that is not what it claims to be. Nothing is corrected.',
+  },
+  no_heading: {
+    cls: 'wait',
+    title: 'No heading on the bus',
+    why: 'Leeway is course over ground minus heading. Without a compass there is nothing to subtract, and the polar stays as it is — which is exactly what every other polar recorder does.',
+  },
+};
+
+async function refreshLeeway() {
+  const el = $('#leeway');
+  if (!el) return;
+  let a;
+  try {
+    a = await (await fetch(`${API}/api/leeway`)).json();
+  } catch (e) {
+    return;
+  }
+  // Le bouton « over ground » n'apparaît que quand il fait quelque chose.
+  const grp = $('#angleGroup');
+  if (grp) {
+    grp.hidden = !a || !a.usable;
+    if (grp.hidden && ui.angle === 'ground') {
+      ui.angle = 'water';
+      syncControls();
+    }
+  }
+  if (!a || !a.verdict) return;
+
+  const v = LEEWAY_VERDICTS[a.verdict] || LEEWAY_VERDICTS.not_enough;
+  const deg = (x, d = 1) => (x == null ? '—' : `${x >= 0 ? '' : '−'}${Math.abs(x).toFixed(d)}°`);
+
+  // Les deux amures, brutes, avec leur nombre de points. Bâbord amure le
+  // bateau part à droite de son cap, tribord à gauche : c'est ce basculement
+  // de signe, et lui seul, qui prouve qu'on regarde de la dérive.
+  const rows = a.bands
+    .filter((b) => b.n)
+    .map(
+      (b) => `<tr><td class="a">${b.from}–${b.to}°</td>
+        <td>${b.port == null ? '—' : deg(b.port)} <span class="k">${b.nPort}</span></td>
+        <td>${b.starboard == null ? '—' : deg(b.starboard)} <span class="k">${b.nStarboard}</span></td>
+        <td><b>${b.leeway == null ? '—' : deg(b.leeway)}</b>${
+          b.se == null ? '' : ` <span class="k">± ${b.se.toFixed(1)}</span>`
+        }</td>
+        <td class="k">${b.heel == null ? '—' : `${b.heel.toFixed(0)}°`}</td></tr>`
+    )
+    .join('');
+
+  const why =
+    a.verdict === 'ok'
+      ? `The gap flips sign with the tack on ${Math.round(a.consistent * 100)}% of the ${a.consistentN} upwind points —
+         that is leeway, not current. What does <i>not</i> flip (${deg(a.bias)}) is current plus compass error; it is
+         subtracted, and it never leaves the boat.`
+      : v.why;
+
+  const model = a.curve.length
+    ? `<div class="hint">Leeway against wind angle, which is the whole point: it grows as you pinch.
+         ${a.curve
+           .filter((c) => c.twa <= 90)
+           .map((c) => `<b>${c.twa}°</b> → ${deg(c.leeway)}`)
+           .join(' · ')}</div>`
+    : '';
+
+  const mag = a.magneticHeading
+    ? `<div class="hint warn">${a.magneticHeading} points carry a raw magnetic heading with no variation applied, so they
+         are left out: the local variation would land whole in the leeway. Publishing
+         <code>navigation.magneticVariation</code>, or a true heading, brings them back.</div>`
+    : '';
+
+  el.innerHTML =
+    `<div class="verdict ${v.cls}"><span class="dot"></span><b>${v.title}</b>${
+      a.upwind != null ? ` — ${deg(a.upwind)} upwind` : ''
+    }</div>
+    <div class="hint">${why}</div>
+    <div class="tablewrap"><table class="speedo"><thead><tr><th class="a">wind angle</th><th>port tack</th>
+      <th>starboard</th><th>leeway</th><th>heel</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="5" class="k">no point with both a heading and a course over ground yet</td></tr>'}</tbody></table></div>
+    ${model}${mag}
+    <div class="hint">Why it matters: 40° off the wind with 5° of leeway makes the same ground as 45° with none.
+      The VMG targets show both angles, and the <b>Wind angle</b> switch at the top redraws the whole polar
+      against the track you actually make. Nothing is rewritten on disk — it is one more reading of the same points.</div>`;
+}
+
 // ── Partage ─────────────────────────────────────────────────────────────────
 //
 // L'envoi est automatique, tous les N points : on n'affiche donc pas un
@@ -1462,7 +1609,11 @@ async function refreshShare() {
   const deal = `<div class="hint">This plugin is free. In exchange it sends the polar it has learned to a shared
       pool, so that the next owner of your model starts with something measured instead of the builder's brochure.
       It goes out on its own — nothing to click, nothing to remember. <b>Nothing collected here contains a
-      position</b>: not one latitude, not one longitude. Only the polar, the model and the name leave the boat.</div>`;
+      position</b>: not one latitude, not one longitude. What leaves the boat is the polar — read both in speed
+      over ground and in speed through water, since neither is trustworthy alone — plus the speed-sensor verdict
+      and the measured leeway, which are what let the pool tell those two readings apart. The model and the name
+      go with them. Current direction and compass bias stay here: they say where you are, not what your boat does.
+      The full payload is one click away below.</div>`;
 
   if (!d.configured) {
     el.innerHTML =
@@ -1756,6 +1907,7 @@ function syncExportHint() {
   const bits = [
     SPEED_EXPORT_LABEL[ui.speed] || ui.speed,
     `${ui.wind} wind`,
+    ui.angle === 'ground' ? 'angle over ground' : 'angle through water',
     `${ui.stat} per cell`,
     ui.smooth === 'on' ? 'smoothed' : 'raw curve',
   ];
@@ -1765,6 +1917,13 @@ function syncExportHint() {
     `.pol, Jieter and CSV contain what the diagram shows — <b>${bits.join(' · ')}</b>. ` +
     `Change the buttons at the top to change the file; the file name repeats the choice. ` +
     `JSON backup is the raw data, with no projection at all.`;
+  // Les angles sur le fond ne se barrent pas. Un routeur qui les prendrait
+  // pour des angles de barre serait faux de toute la dérive, et le .pol
+  // n'accepte aucune ligne de commentaire pour le dire — d'où l'avertissement
+  // ici, et le repère glissé dans le nom du fichier.
+  if (ui.angle === 'ground')
+    txt +=
+      ` <span class="warn">These are angles made good over the ground, not angles to steer — fine for judging performance, wrong to feed a router that expects steering angles.</span>`;
   // Une mise en garde, pas un verrou : c'est son bateau et son capteur.
   if (ui.speed === 'stw')
     txt +=
@@ -2024,6 +2183,7 @@ function refreshAll(resetBins) {
   refreshStatus();
   refreshPolar();
   refreshSpeedo();
+  refreshLeeway();
   refreshSailHistory();
   refreshShare();
   refreshSupport();
@@ -2043,6 +2203,7 @@ refreshLive();
 refreshStatus();
 refreshPolar();
 refreshSpeedo();
+refreshLeeway();
 refreshSailHistory();
 refreshShare();
 refreshSupport();
@@ -2053,6 +2214,7 @@ setInterval(refreshLive, 2000);
 setInterval(refreshStatus, 15000);
 setInterval(refreshPolar, 60000);
 setInterval(refreshSpeedo, 60000);
+setInterval(refreshLeeway, 60000);
 // La comparaison des voilures se rafraîchit d'elle-même quand on change de
 // coin de polaire ; ce battement ne sert qu'au cas où on y reste (des points
 // tombent, le tableau doit en tenir compte) et quand le repère est éteint.
