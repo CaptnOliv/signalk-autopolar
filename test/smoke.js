@@ -74,7 +74,12 @@ global.setInterval = (fn) => {
 global.clearInterval = () => {};
 
 const plugin = require('../index.js')(fakeApp);
-const IDENT = { boatModel: 'Test 40', shareName: 'test', sharePolar: false };
+// Identité du bateau (sans elle le plugin ne collecte rien), et vérification
+// de version coupée : le registre npm n'a rien à faire d'un `npm test`, et la
+// tenue de ce module (rien au démarrage, silence hors ligne) est couverte par
+// test/update.test.js. Le ping d'installation, lui, s'abstient d'office la
+// première heure — l'horloge de ce test n'y arrive pas.
+const IDENT = { boatModel: 'Test 40', shareName: 'test', sharePolar: false, checkForUpdates: false };
 plugin.start(Object.assign({ windowS: 30, minSamples: 1, staleMs: 6000 }, IDENT));
 global.setInterval = realSetInterval;
 assert.ok(tick, 'le plugin a bien démarré une boucle');
@@ -384,6 +389,28 @@ assert.strictEqual(call('GET /api/support').ask, false);
     assert.ok(!txt.includes(forbidden), `« ${forbidden} » ne doit pas quitter le bateau`);
 }
 
+// ── Suggestions de voilure : une période confirmée ne doit pas revenir ────
+// Les frontières bougent avec la polaire ; le rattachement se fait donc en
+// points, pas en minutes. Ici on confirme une période décalée de quelques
+// secondes par rapport au découpage, et elle doit rester traitée.
+{
+  const sug = call('GET /api/sail-suggest');
+  assert.ok(Array.isArray(sug.segments), 'des segments');
+  assert.strictEqual(typeof sug.hideHandledAfterDays, 'number');
+  const seg = sug.segments.find((x) => x.n >= 2);
+  if (seg) {
+    assert.strictEqual(seg.handled, null, 'rien de traité au départ');
+    // Volontairement décalée : elle ne contient pas le segment au sens de
+    // l'horloge, mais elle couvre bien tous ses points.
+    call('POST /api/sail-reviewed', {}, { from: seg.from - 5000, to: seg.to + 5000 });
+    const again = call('GET /api/sail-suggest').segments.find((x) => x.from === seg.from);
+    assert.ok(again, 'le segment est toujours là');
+    assert.strictEqual(again.handled, 'reviewed', 'une plage décalée de 5 s couvre quand même ses points');
+    assert.strictEqual(again.handledPts, again.pts);
+    call('POST /api/sail-reviewed/clear', {}, {});
+  }
+}
+
 // Tag de voilure.
 call('POST /api/sail', {}, { main: '1ris', head: 'genoa' });
 assert.deepStrictEqual(call('GET /api/status').sail, { main: '1ris', head: 'genoa' });
@@ -473,7 +500,7 @@ p2.stop();
     t = fn;
     return 0;
   };
-  pl.start({ windowS: 30, minSamples: 1 });
+  pl.start({ windowS: 30, minSamples: 1, checkForUpdates: false });
   global.setInterval = realSetInterval;
   for (let i = 0; i < 200; i++) {
     world = { sog: 6.5, stw: 6.4, aws: 14, awa: 42, tws: 12, twa: 45, hdg: 100, rpm: 0 };

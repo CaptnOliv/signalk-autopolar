@@ -55,6 +55,71 @@ const RAW_OPTS = {
   minTwaDeg: 5,
 };
 
+// Les valeurs par défaut de la configuration. Elles vivent ici, à portée de
+// test, et PAS seulement dans `default:` du schéma : le serveur SignalK passe
+// à plugin.start() la configuration enregistrée telle quelle, sans y injecter
+// les défauts du schéma (voir doPluginStart dans signalk-server). Une option
+// ajoutée après coup est donc `undefined` sur toute installation existante —
+// c'est-à-dire fausse, si c'est un booléen. test/defaults.test.js verrouille
+// la correspondance entre les deux listes.
+const DEFAULTS = {
+      sogPath: 'navigation.speedOverGround',
+      stwPath: 'navigation.speedThroughWater',
+      awsPath: 'environment.wind.speedApparent',
+      awaPath: 'environment.wind.angleApparent',
+      twsPath: 'environment.wind.speedTrue',
+      twaPath: 'environment.wind.angleTrueWater',
+      cogPath: 'navigation.courseOverGroundTrue',
+      headingTruePath: 'navigation.headingTrue',
+      headingMagPath: 'navigation.headingMagnetic',
+      variationPath: 'navigation.magneticVariation',
+      rotPath: 'navigation.rateOfTurn',
+      navStatePath: 'navigation.state',
+      attitudePath: 'navigation.attitude',
+      windowS: 60,
+      awaDriftMaxDeg: 15,
+      awaSpreadMaxDeg: 45,
+      twsDriftMaxKn: 3,
+      twsSpreadMaxKn: 8,
+      sogDriftMaxKn: 1.5,
+      sogSpreadMaxKn: 2.5,
+      rotMaxDegS: 6,
+      minSogKn: 1,
+      minAwsKn: 1.5,
+      minTwaDeg: 25,
+      allowDeclaredSailing: true,
+      declaredSailingMinutes: 90,
+      autostateFallback: true,
+      staleMs: 6000,
+      engineStaleMs: 180000,
+      rawSamples: true,
+      maxSampleMB: 500,
+      twsBins: [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 30],
+      twaStep: 5,
+      minSamples: 1,
+      sailHistoryDays: 2,
+      sailHandledCoverage: 0.9,
+      sailChangeSide: 6,
+      sailChangeMinStepKn: 0.5,
+      seaStateModerateDeg: 3,
+      seaStateRoughDeg: 8,
+      vmgOffsetsDeg: [5, 10],
+      idleAlertMin: 20,
+      ntfyUrl: '',
+      ntfyToken: '',
+      boatModel: '',
+      shareName: '',
+      sharePolar: true,
+      shareEndpoint: 'https://autopolar.quicky.app/v1/polars',
+      shareEveryPoints: 500,
+      usageStats: true,
+      checkForUpdates: true,
+      publishPerformance: false,
+      supportPrompt: true,
+      historyProvider: '',
+      historyResolutionS: 0,
+};
+
 module.exports = function (app) {
   const plugin = {
     id: 'signalk-autopolar',
@@ -341,6 +406,13 @@ module.exports = function (app) {
             description:
               'A stretch you have corrected or confirmed stops asking for attention once it is this old. Without it the list only ever grows, one passage after another, and the periods that still need a decision get lost among those that do not. Nothing is deleted — a toggle brings them all back.',
             default: 2,
+          },
+          sailHandledCoverage: {
+            type: 'number',
+            title: 'Share of a stretch that must already be labelled to count as handled',
+            description:
+              'Segment boundaries are deduced from the polar, so they move a little every time the polar grows: a stretch confirmed last week rarely lines up to the minute with today\'s cut. A stretch therefore counts as handled when this share of ITS POINTS falls inside what you have already corrected or confirmed — not when the clock times match. Below the threshold it stays in the list and says what is missing ("20 of 32 points"), because hiding half a stretch nobody ever labelled would be worse than asking again.',
+            default: 0.9,
           },
           sailChangeSide: {
             type: 'number',
@@ -1749,15 +1821,22 @@ module.exports = function (app) {
       // la webapp montre ce qu'elle va remplacer — et s'il a déjà été traité,
       // par quoi. Sans ça la liste redemande éternellement de statuer sur des
       // périodes déjà réglées, et s'allonge d'une nav à l'autre.
+      //
+      // Le rattachement se fait en points, pas en minutes : les frontières de
+      // segments sont recalculées à chaque fois que la polaire bouge, donc une
+      // plage confirmée il y a dix jours ne tombe plus jamais pile sur le
+      // découpage du jour. Voir markHandled().
       const ov = store.overrides();
-      const covers = (r, seg) => r.from <= seg.from && r.to >= seg.to;
-      for (const seg of out.segments) {
-        const corrected = ov.sailRanges.findIndex((r) => covers(r, seg));
-        const reviewed = corrected < 0 ? ov.sailReviewed.findIndex((r) => covers(r, seg)) : -1;
-        seg.handled = corrected >= 0 ? 'corrected' : reviewed >= 0 ? 'reviewed' : null;
-        seg.handledIndex = corrected >= 0 ? corrected : reviewed >= 0 ? reviewed : null;
-        seg.ageDays = (Date.now() - seg.to) / 86400000;
-      }
+      sailchange.markHandled(
+        out.segments,
+        runs,
+        [
+          ...ov.sailRanges.map((r, index) => ({ from: r.from, to: r.to, kind: 'corrected', index })),
+          ...ov.sailReviewed.map((r, index) => ({ from: r.from, to: r.to, kind: 'reviewed', index })),
+        ],
+        { coverage: opts.sailHandledCoverage }
+      );
+      for (const seg of out.segments) seg.ageDays = (Date.now() - seg.to) / 86400000;
       out.hideHandledAfterDays = opts.sailHistoryDays;
       for (const seg of out.segments) {
         const inSeg = runs.filter((r) => r.ts >= seg.from && r.ts <= seg.to);
@@ -2207,64 +2286,7 @@ module.exports = function (app) {
     delete flatOptions.polarBins;
     delete flatOptions.advanced;
 
-    opts = Object.assign(
-      {
-        sogPath: 'navigation.speedOverGround',
-        stwPath: 'navigation.speedThroughWater',
-        awsPath: 'environment.wind.speedApparent',
-        awaPath: 'environment.wind.angleApparent',
-        twsPath: 'environment.wind.speedTrue',
-        twaPath: 'environment.wind.angleTrueWater',
-        cogPath: 'navigation.courseOverGroundTrue',
-        headingTruePath: 'navigation.headingTrue',
-        headingMagPath: 'navigation.headingMagnetic',
-        variationPath: 'navigation.magneticVariation',
-        rotPath: 'navigation.rateOfTurn',
-        navStatePath: 'navigation.state',
-        attitudePath: 'navigation.attitude',
-        windowS: 60,
-        awaDriftMaxDeg: 15,
-        awaSpreadMaxDeg: 45,
-        twsDriftMaxKn: 3,
-        twsSpreadMaxKn: 8,
-        sogDriftMaxKn: 1.5,
-        sogSpreadMaxKn: 2.5,
-        rotMaxDegS: 6,
-        minSogKn: 1,
-        minAwsKn: 1.5,
-        minTwaDeg: 25,
-        allowDeclaredSailing: true,
-        declaredSailingMinutes: 90,
-        autostateFallback: true,
-        staleMs: 6000,
-        engineStaleMs: 180000,
-        rawSamples: true,
-        maxSampleMB: 500,
-        twsBins: [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 30],
-        twaStep: 5,
-        minSamples: 1,
-        sailHistoryDays: 2,
-        sailChangeSide: 6,
-        sailChangeMinStepKn: 0.5,
-        seaStateModerateDeg: 3,
-        seaStateRoughDeg: 8,
-        vmgOffsetsDeg: [5, 10],
-        idleAlertMin: 20,
-        ntfyUrl: '',
-        ntfyToken: '',
-        boatModel: '',
-        shareName: '',
-        sharePolar: true,
-        shareEndpoint: 'https://autopolar.quicky.app/v1/polars',
-        shareEveryPoints: 500,
-        usageStats: true,
-        publishPerformance: false,
-        supportPrompt: true,
-        historyProvider: '',
-        historyResolutionS: 0,
-      },
-      flatOptions
-    );
+    opts = Object.assign({}, DEFAULTS, flatOptions);
 
     const dir = app.getDataDirPath();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -2315,3 +2337,6 @@ module.exports = function (app) {
 
   return plugin;
 };
+
+// Exposé pour test/defaults.test.js uniquement.
+module.exports.DEFAULTS = DEFAULTS;

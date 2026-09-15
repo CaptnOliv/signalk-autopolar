@@ -18,6 +18,11 @@ of heading variation; hand steering in a swell, more like 20-25°. When in
 doubt, collect wide and **replay the raw log** afterwards with tighter
 thresholds — the operation is reversible as many times as you like.
 
+`sailHandledCoverage` decides when a sail-plan stretch counts as already dealt
+with: segment boundaries move as the polar grows, so the match is made on the
+stretch's points rather than on clock times. See [Fixing the sail plan after
+the fact](sail-plan-history.md).
+
 `variationPath` is only read when the true heading is missing: a raw magnetic
 heading is off by the local variation, which would land whole in the leeway
 measurement (course over ground minus heading). With the variation published,

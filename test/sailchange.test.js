@@ -112,4 +112,52 @@ const build = (runs) => polar.buildPolar(runs, { minSamples: 1, twaStep: 5 });
   assert.strictEqual(cell(asReefed).value, 6);
 }
 
+// ── Une période traitée doit le rester quand la frontière bouge ───────────
+//
+// Le cas réel qui a motivé ce code : les frontières de segments sortent d'une
+// comparaison à la polaire, donc elles se déplacent de quelques minutes à
+// chaque nav. Sur Jazzy, 24 plages confirmées sur 31 ne correspondaient plus à
+// aucun segment, et des périodes dont 100 % des points étaient traités
+// s'affichaient encore douze jours après.
+{
+  const runs = [];
+  for (let i = 0; i < 20; i++) runs.push({ id: i, ts: T0 + i * MIN, sog: 6, twa: 90, tws: 12 });
+
+  // Confirmé « T0+2 → T0+11 » ; le découpage du jour dit « T0 → T0+9 ».
+  // Décalé de deux minutes, mais ce sont les mêmes points... sauf deux.
+  const segs = [{ from: T0, to: T0 + 9 * MIN, n: 10 }];
+  const ranges = [{ from: T0 + 2 * MIN, to: T0 + 11 * MIN, kind: 'reviewed', index: 0 }];
+  sc.markHandled(segs, runs, ranges);
+  assert.strictEqual(segs[0].handledPts, 8, '8 des 10 points du segment sont couverts');
+  assert.strictEqual(segs[0].handled, null, '80 % ne suffit pas : il reste deux points jamais étiquetés');
+
+  // Élargie d'une minute de part et d'autre, elle couvre tout : traité, malgré
+  // des horaires qui ne tombent nulle part pareil.
+  const segs2 = [{ from: T0, to: T0 + 9 * MIN, n: 10 }];
+  sc.markHandled(segs2, runs, [{ from: T0 - MIN, to: T0 + 11 * MIN, kind: 'reviewed', index: 0 }]);
+  assert.strictEqual(segs2[0].handled, 'reviewed');
+  assert.strictEqual(segs2[0].handledPts, 10);
+  assert.strictEqual(segs2[0].handledIndex, 0, "l'annulation doit viser la bonne plage");
+
+  // Deux « ok » posés sur deux découpages successifs : c'est leur UNION qui
+  // couvre. Compter la meilleure des deux ferait réapparaître la période.
+  const segs3 = [{ from: T0, to: T0 + 9 * MIN, n: 10 }];
+  sc.markHandled(segs3, runs, [
+    { from: T0, to: T0 + 4 * MIN, kind: 'reviewed', index: 0 },
+    { from: T0 + 5 * MIN, to: T0 + 9 * MIN, kind: 'reviewed', index: 1 },
+  ]);
+  assert.strictEqual(segs3[0].handled, 'reviewed', 'deux moitiés confirmées font un tout');
+
+  // Une correction prime sur une simple confirmation.
+  const segs4 = [{ from: T0, to: T0 + 9 * MIN, n: 10 }];
+  sc.markHandled(segs4, runs, [{ from: T0 - MIN, to: T0 + 11 * MIN, kind: 'corrected', index: 0 }]);
+  assert.strictEqual(segs4[0].handled, 'corrected');
+
+  // Rien de traité : rien n'est caché, et le compte le dit.
+  const segs5 = [{ from: T0, to: T0 + 9 * MIN, n: 10 }];
+  sc.markHandled(segs5, runs, []);
+  assert.strictEqual(segs5[0].handled, null);
+  assert.strictEqual(segs5[0].handledPts, 0);
+}
+
 console.log('sailchange: ok');

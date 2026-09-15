@@ -1,0 +1,74 @@
+# Le banc d'essai commun des plugins SignalK.
+#
+# Il appelle le workflow partagé de SignalK/signalk-server, qui installe et
+# lance le plugin sur Linux, macOS et Windows (Node 22 et 24). Son résultat est
+# lu par le registre de plugins (https://signalk.org/signalk-plugin-registry),
+# qui en fait le badge `plugin-ci` de la fiche dans la boutique : sans ce
+# fichier la fiche affiche `no-plugin-ci`, quelle que soit la qualité des tests
+# maison.
+#
+# Il ne remplace pas `npm test` — c'est `npm test` qu'il lance. Ce qu'il ajoute,
+# c'est de le lancer AILLEURS que sur la Pi où tout a été écrit : un chemin
+# Windows, une version de Node plus récente, un ARM. Le plugin tourne surtout
+# sur des Raspberry, mais il est développé sur autre chose et installé sur tout.
+#
+# armv7 (Cerbo GX) et le test d'intégration avec un vrai serveur SignalK sont
+# volontairement coupés sur les exécutions automatiques : ils sont lents et
+# QEMU est capricieux. Ils restent déclenchables à la main depuis l'onglet
+# Actions, ce qui est le bon moment pour eux — avant une release.
+
+name: SignalK Plugin CI
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      node-versions:
+        description: 'JSON array of Node versions, example: ["22","24"]'
+        required: false
+        default: '["22", "24"]'
+        type: string
+      enable-armv7:
+        description: Run armv7 (Cerbo GX) tests via QEMU
+        required: false
+        default: false
+        type: boolean
+      enable-signalk-integration:
+        description: Start SignalK server and install plugin for integration testing
+        required: false
+        default: false
+        type: boolean
+      signalk-server-versions:
+        description: 'JSON array of signalk-server versions for integration testing'
+        required: false
+        default: '["latest"]'
+        type: string
+
+jobs:
+  # ── Exécutions automatiques (push / pull request) ─────────────────────────
+  test-plugin-auto:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@master
+    with:
+      # Aucune dépendance npm et aucune étape de build : les tests sont des
+      # scripts node autonomes, `npm test` suffit tel quel.
+      test-command: npm test
+      node-versions: '["22", "24"]'
+      enable-armv7: false
+      enable-signalk-integration: false
+
+  # ── Exécutions manuelles, réglables ───────────────────────────────────────
+  test-plugin-manual:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@master
+    with:
+      test-command: npm test
+      node-versions: ${{ inputs.node-versions }}
+      enable-armv7: ${{ inputs.enable-armv7 }}
+      enable-signalk-integration: ${{ inputs.enable-signalk-integration }}
+      signalk-server-versions: ${{ inputs.signalk-server-versions }}

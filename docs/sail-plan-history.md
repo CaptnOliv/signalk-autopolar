@@ -43,3 +43,28 @@ A stretch you have corrected or confirmed stops asking for attention once it
 is a few days old (configurable, `sailHistoryDays`) — the list is meant to grow
 one open question at a time, not accumulate every decision ever made. Nothing
 is deleted; a toggle in the web app brings the handled stretches back.
+
+## Why "handled" is counted in points, not in minutes
+
+Segment boundaries are not data, they are deductions: they come out of a
+comparison against the polar, and the polar grows with every passage. A stretch
+confirmed as `12:47 → 13:08` meets, three sails later, a segment cut at
+`12:45 → 12:57` — the same measurements, two minutes earlier.
+
+Matching those by the clock fails, and it fails silently in the worst
+direction: the stored range no longer starts before the segment, so a stretch
+that was settled comes back and asks again, for ever. Measured on the boat this
+was written for: **24 of 31 stored ranges no longer matched any segment**, and
+four stretches whose points were 100 % labelled were still on the list twelve
+days later.
+
+So a stretch counts as handled when this share of **its points** (90 % by
+default, `sailHandledCoverage`) falls inside what you have already corrected or
+confirmed — the union of them, since two "ok" clicks posted on two successive
+cuts must add up. What the crew confirmed is that the label on those
+*measurements* is right; the time range was only ever a way of pointing at
+them.
+
+Below the threshold the stretch stays on the list **and says what is missing**
+("20 of 32 points already confirmed"). Hiding half a stretch nobody ever
+labelled would be worse than asking again.

@@ -25,6 +25,11 @@ function assertHeadersAscii(headers) {
   }
 }
 global.fetch = async (url, init) => {
+  // Ce test ne parle que d'ntfy. Toute autre sortie HTTP (reversement, ping
+  // d'installation, vérification de version) est une erreur ici : comptée
+  // comme une alerte, elle ferait passer ou échouer ce fichier pour une
+  // raison qui n'a rien à voir avec l'alerte d'inactivité.
+  if (!String(url).startsWith('https://ntfy.test/')) throw new Error(`sortie HTTP inattendue : ${url}`);
   assertHeadersAscii(init.headers);
   if (failNext > 0) {
     failNext--;
@@ -90,7 +95,14 @@ function startPlugin(options) {
   const p = require('../index.js')(fakeApp);
   // Identité du bateau : sans elle le plugin ne collecte rien du tout (le
   // consentement au partage passe par là), et ce test ne testerait plus rien.
-  p.start(Object.assign({ boatModel: 'Test 40', shareName: 'test', sharePolar: false }, options));
+  // Les autres canaux sortants sont coupés : ce fichier teste l'alerte
+  // d'inactivité, pas la vérification de version ni le ping d'installation.
+  p.start(
+    Object.assign(
+      { boatModel: 'Test 40', shareName: 'test', sharePolar: false, usageStats: false, checkForUpdates: false },
+      options
+    )
+  );
   global.setInterval = realSetInterval;
   return [p, tick];
 }

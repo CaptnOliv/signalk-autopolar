@@ -1195,7 +1195,17 @@ function renderSailHistory() {
                  <button class="act" data-ok="${seg.from}" data-to="${seg.to}" title="This stretch is already labelled correctly">ok</button>`
           }</span>
         </div>
-        ${why || sails.length > 1 ? `<div class="why">${[why, sails.length > 1 ? sails.slice(1).map((x) => `${x.n} × ${sailLabel(x)}`).join(', ') : ''].filter(Boolean).join(' · ')}</div>` : ''}
+        ${(() => {
+          // Une période partiellement traitée doit dire ce qui lui manque.
+          // Les frontières bougent avec la polaire : un « ok » posé la semaine
+          // dernière ne recouvre plus tout à fait le découpage du jour, et
+          // sans ce compte on se demande pourquoi une période qu'on croit
+          // avoir réglée revient dans la liste.
+          const partial =
+            !seg.handled && seg.handledPts > 0 && seg.pts ? `${seg.handledPts} of ${seg.pts} points already confirmed` : '';
+          const bits = [why, partial, sails.length > 1 ? sails.slice(1).map((x) => `${x.n} × ${sailLabel(x)}`).join(', ') : ''].filter(Boolean);
+          return bits.length ? `<div class="why">${bits.join(' · ')}</div>` : '';
+        })()}
         ${open ? sailEditor() : ''}
       </div>`;
     })
