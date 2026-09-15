@@ -1588,11 +1588,12 @@ function usageNote(u) {
       installation anywhere.</div>`;
   }
   const seen = u.lastSentAt ? new Date(u.lastSentAt).toLocaleDateString() : 'not yet';
-  return `<div class="hint">Once a day, separately from the polar, the plugin says that this install exists:
+  return ``;
+  /*<div class="hint">Once a day, separately from the polar, the plugin says that this install exists:
     a random ID, the versions, and whether sharing is on — no position, no boat name, no polar. It is the only
     count of how many boats run this. Last sent: <b>${seen}</b>.
     <button class="linklike" id="btnUsageSee">See exactly what that ping contains</button>. Switch it off with
-    <i>Let me know this install exists</i> in the plugin configuration.</div>`;
+    <i>Let me know this install exists</i> in the plugin configuration.</div>`;*/
 }
 
 function wireUsage() {
@@ -2010,8 +2011,7 @@ async function refreshUpdate() {
     const u = await (await fetch(`${API}/api/update`)).json();
     if (!u || !u.latest) return void (el.hidden = true);
     el.innerHTML =
-      `<b>v${u.latest}</b> is out — you are running v${u.current}. Update from the SignalK Appstore. ` +
-      `<a href="https://github.com/CaptnOliv/signalk-autopolar/releases" target="_blank" rel="noopener">What changed</a>`;
+      `<b>v${u.latest}</b> is out — you are running v${u.current}. Update from the SignalK Appstore. `;
     el.hidden = false;
   } catch (e) {
     el.hidden = true;

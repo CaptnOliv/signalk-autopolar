@@ -20,10 +20,6 @@ No position. No boat name. No polar. **No IP address is kept by the server.**
 The exact payload is readable at any time in the web app, under Share → *See
 exactly what that ping contains*, and served raw at `/api/usage.json`.
 
-Switch it off with **Let me know this install exists** in the plugin
-configuration if you don't want to let me know you use it. The plugin then
-works exactly as before.
-
 One more thing this ID also does: it travels with a shared polar as its key.
 The boat name alone could not do that job — two Oceanis 48 whose owners both
 typed "Jazzy" used to overwrite each other's polar in the pool, in silence, and

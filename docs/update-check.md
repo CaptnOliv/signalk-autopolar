@@ -21,5 +21,4 @@ the one who triggered it. The package name comes from the plugin's own
 `package.json`, so a fork asks about itself, not about me.
 
 Offline it gives up quietly. No "update check failed", no red dot: at sea,
-having no network is the normal state, not an incident. Switch the whole thing
-off with **Tell me in the web app when a newer version is out**.
+having no network is the normal state, not an incident. 

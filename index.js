@@ -263,20 +263,20 @@ module.exports = function (app) {
           'A polar frozen at its first 500 points is worth much less than the same one at 3000, so each send replaces the previous one for your boat. Sending is never on a clock: nothing goes out unless new points came in.',
         default: 500,
       },
-      usageStats: {
+      /* usageStats: {
         type: 'boolean',
         title: 'Let me know this install exists',
         description:
           'Once a day this sends, and nothing else: a random ID drawn once on this install (tied to nothing \u2014 not your boat name, not your hardware, not your network), the plugin version, the Node version, the SignalK version, the date that ID was drawn, and whether polar sharing is on. No position, no boat name, no polar, no IP address kept by the server. It is the only way I have of knowing whether anyone out there is running this plugin. The exact payload is readable at any time in the web app, under Share. The same ID travels with a shared polar as its key, so that your sends replace each other instead of colliding with another boat of the same name \u2014 turning this off stops the daily ping, not that key.',
         default: true,
-      },
-      checkForUpdates: {
+      }, */
+      /* checkForUpdates: {
         type: 'boolean',
         title: 'Tell me in the web app when a newer version is out',
         description:
           'Once a day the plugin asks the npm registry \u2014 the same place the SignalK Appstore installs from \u2014 what the latest published version of this plugin is, and shows one discreet line in the web app if you are behind. It is a plain GET: no identifier, no payload, nothing about you or your boat is sent, and the answer is never acted on automatically \u2014 updating stays a decision you make in the Appstore. Offline it silently gives up rather than showing an error, because at sea having no network is the normal state.',
         default: true,
-      },
+      }, */
       publishPerformance: {
         type: 'boolean',
         title: 'Publish performance.* into SignalK (target speed, ratio)',
@@ -284,13 +284,13 @@ module.exports = function (app) {
           'Leave off until the polar has proved itself, and off entirely if another polar plugin is installed: they would all write to the same paths.',
         default: false,
       },
-      supportPrompt: {
+      /* supportPrompt: {
         type: 'boolean',
         title: 'Let the web app ask for a star or a coffee, once',
         description:
           'The plugin is free and has no account, no telemetry and no nag screen on startup. Once the polar it built for you is actually usable, the web app shows a single dismissible banner offering to star the repository or buy the author a coffee — at most twice in the life of the installation, never again once you have answered. Turn this off and it never appears at all.',
         default: true,
-      },
+      }, */
       polarBins: {
         type: 'object',
         title: 'Wind speed columns of the polar (kn)',
