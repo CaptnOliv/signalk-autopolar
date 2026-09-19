@@ -93,13 +93,14 @@ header #updateNote a { color: var(--ink-2); }
   #cardDiagram  { order: 2; }
   #cardVmg      { order: 3; }
   #cardSailCompare { order: 4; }
-  #cardInspect  { order: 5; }
-  #cardTable    { order: 6; }
-  #cardSail     { order: 7; }
-  #cardHabits   { order: 8; }
-  #cardSpeedo   { order: 9; }
-  #cardShare    { order: 10; }
-  #cardExport   { order: 11; }
+  #cardLeeway   { order: 5; }
+  #cardInspect  { order: 6; }
+  #cardTable    { order: 7; }
+  #cardSail     { order: 8; }
+  #cardHabits   { order: 9; }
+  #cardSpeedo   { order: 10; }
+  #cardShare    { order: 11; }
+  #cardExport   { order: 12; }
 }
 
 /* ── Bandeau d'état en direct ──────────────────────────────────────────── */
@@ -213,6 +214,7 @@ svg { display: block; width: 100%; height: auto; overflow: visible; }
 .tablewrap { overflow: auto; max-height: 460px; }
 table { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; width: 100%; }
 th, td { padding: 3px 8px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+.targets th { text-align: left; }
 th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--surface); }
 td.a { text-align: left; color: var(--ink-2); }
 td.v { cursor: pointer; }
