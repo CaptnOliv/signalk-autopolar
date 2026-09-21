@@ -520,3 +520,8 @@ footer { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--hairli
    d'œil des périodes qui comptent encore. */
 .seg-row.excl { opacity: 0.55; }
 .seg-row.excl .cur { text-decoration: line-through; }
+
+/* Le fuseau d'affichage de « Sail plan over time ». Poussé à droite et discret :
+   ce n'est pas une commande, c'est le repère qui manque quand deux appareils du
+   bord ne sont pas réglés sur la même zone. */
+.row-actions .k.tz { margin-left: auto; cursor: help; }

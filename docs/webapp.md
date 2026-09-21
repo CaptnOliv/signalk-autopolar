@@ -8,6 +8,11 @@ metadata and serves only the API (`/api/...`).
 
 - **Live state** — recording or not, and exactly why; progress of the current
   window; every input with its freshness and age.
+All times shown in the web app are in the **browser's** timezone — the device
+you are holding, not the boat or the server. "Sail plan over time" names that
+zone in its header, which is the quickest way to spot a laptop that has not
+caught up with the boat.
+
 - **Pause** — one click and nothing is recorded at all, points *or* raw log.
   One hour by default, then 1 h / 4 h / until you resume. Survives a restart,
   lifts itself when timed. See [Pausing Autopolar](pause.md).

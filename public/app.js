@@ -1178,6 +1178,42 @@ function renderChips() {
 // sont présentées comme des candidates à vérifier, jamais comme un verdict :
 // sur une nav de 15 h, le détecteur retrouve les vrais changements mais sort
 // aussi des marches qui n'en sont pas.
+// Un `datetime-local` ne porte AUCUN fuseau : il veut l'heure murale, telle
+// qu'on la lirait sur une pendule. On y arrive en décalant l'instant de son
+// propre décalage horaire, puis en le sérialisant en UTC.
+//
+// Le décalage se lit SUR CET INSTANT-LÀ, pas sur aujourd'hui. C'était le bug :
+// `new Date().getTimezoneOffset()` donne le décalage du jour où l'on clique,
+// si bien qu'en corrigeant depuis l'été une période située de l'autre côté du
+// changement d'heure, les deux champs préremplis partaient avec une heure de
+// trop — et `Date.parse` les relisait tels quels, donc la plage appliquée
+// portait à côté des points qu'on visait.
+const localInput = (ts) => {
+  const d = new Date(ts);
+  return new Date(ts - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+
+// Quel fuseau la page est-elle en train d'afficher. Sur un bateau qui voyage,
+// c'est celui de l'APPAREIL qu'on tient, et deux appareils à bord ne sont pas
+// toujours d'accord : un portable resté sur Europe/Paris affiche une heure de
+// moins qu'un téléphone passé à Europe/Athens, sur exactement les mêmes
+// points. Une heure nue ne permet pas de s'en apercevoir ; le nom de la zone,
+// si — et c'est le nom, plus que le décalage, qui dit lequel des deux se
+// trompe.
+const tzLabel = () => {
+  let zone = '';
+  try {
+    zone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch (e) {
+    /* un navigateur sans Intl reste lisible, il dit juste moins */
+  }
+  const off = -new Date().getTimezoneOffset();
+  const hh = Math.floor(Math.abs(off) / 60);
+  const mm = Math.abs(off) % 60;
+  const utc = `UTC${off < 0 ? '−' : '+'}${hh}${mm ? `:${String(mm).padStart(2, '0')}` : ''}`;
+  return zone ? `${zone} · ${utc}` : utc;
+};
+
 const fmtTime = (ts, withDay) =>
   new Date(ts).toLocaleString(undefined, withDay ? { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
 
@@ -1298,6 +1334,7 @@ function renderSailHistory() {
     `<div class="row-actions">
        <div class="group"><label>Split</label><div class="seg" id="segSens">${sens}</div></div>
        <button class="act" id="btnManual">${sailHist.manual ? 'cancel' : 'enter times by hand…'}</button>
+       <span class="k tz" title="Times come from this device's clock settings, not from the boat or the server. Change zone and every row below shifts with it.">times in ${tzLabel()}</span>
      </div>` +
     (sailHist.manual ? manualEditor() : '') +
     `<div class="seglist">${rows}</div>` +
@@ -1373,10 +1410,7 @@ function renderSailHistory() {
 // l'heure : « j'ai pris le ris vers 17 h ». Aucune détection ne bat ça.
 function manualEditor() {
   const d = sailHist.data;
-  const iso = (ts) => {
-    const x = new Date(ts - new Date().getTimezoneOffset() * 60000);
-    return x.toISOString().slice(0, 16);
-  };
+  const iso = localInput;
   // Les deux dates vivent dans l'état, pas dans le DOM : choisir une voile
   // redessine le panneau, et une heure saisie ne doit pas disparaître à ce
   // moment-là.

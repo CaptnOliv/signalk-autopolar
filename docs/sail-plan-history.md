@@ -93,3 +93,30 @@ The same points can also be excluded one by one from the polar diagram, by
 unticking them in cell inspection. That works when you have already found the
 offending cell; it does not, when what you know is *"Tuesday afternoon was
 rubbish"*.
+
+## Which clock these times are on
+
+The device you are reading the page on — not the boat, not the SignalK server,
+not UTC. Points are stored as plain epoch milliseconds, with no zone attached;
+the web app renders them in whatever zone the browser reports. The header of
+this card says which one that is (`times in Europe/Athens · UTC+3`), because on
+a boat that travels, two devices on board are not always set to the same place,
+and a bare `14:32` gives you no way to notice.
+
+That is worth knowing in two situations:
+
+- **A laptop that has not caught up with the boat.** Cross into a new zone,
+  leave the laptop on the old one, and every row reads an hour or three out
+  while the phone beside it reads correctly. Nothing is wrong with the data —
+  set the device's clock and the rows come right.
+- **Changing zone shifts history.** A stretch sailed at 14:00 in Greece reads
+  13:00 once the same machine is set to Paris. This is the intended behaviour
+  of local time, not a fault: the rows answer *when was this, in the frame I am
+  in now*. It does mean the times you remember from a passage may not match the
+  times shown, months and a few countries later.
+
+Typing times by hand uses the same zone, and — since `v1.1.1` — the offset in
+force **at the moment being edited**, not the offset in force today. Before
+that fix, correcting a winter passage from a summer afternoon pre-filled both
+fields an hour late, and the range applied landed beside the points it was
+aimed at.

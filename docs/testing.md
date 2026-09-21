@@ -28,7 +28,11 @@ sail whichever tack it is on, and no attitude sensor means no heel line rather
 than a 0° that would pass for a measurement), `history` (angles are never
 averaged, the engine guard band works in both directions, the resolution is
 measured on a store whose 1-second buckets are one-third empty, and an
-already-watched period is left alone) and `smoke` — which runs the whole plugin
+already-watched period is left alone), `timefmt` (the times typed by hand use
+the offset in force **at the instant being edited**, not today's — a difference
+that only shows up across a daylight-saving boundary, so the test re-runs itself
+under `TZ=Europe/Athens` rather than passing vacuously under UTC) and `smoke` —
+which runs the whole plugin
 against a fake SignalK server over a simulated passage: starboard beat, tack,
 port beat, then a leg under engine. It checks that points come out of the
 steady legs, that none comes out of the tack or the engine leg, and that
