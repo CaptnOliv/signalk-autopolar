@@ -84,7 +84,10 @@ const runFor = (ms) => {
     node: process.version,
     signalk: '2.0.0',
     firstSeen: u.firstSeen(),
-    sharing: false,
+    // Trois états possibles — 'on', 'off', 'unconfigured' — et non un booléen :
+    // la règle est testée nue dans share.test.js, ici c'est la forme de ce qui
+    // part qui est fixée.
+    sharing: 'unconfigured',
   });
 
   assert.strictEqual(u.maybeSend(OPTS, payload), false, 'au démarrage, rien ne part');
@@ -97,6 +100,12 @@ const runFor = (ms) => {
     Object.keys(posts[0].body).sort(),
     ALLOWED.slice().sort(),
     'la charge utile est exactement celle qu\'annonce la configuration, pas un champ de plus'
+  );
+
+  assert.strictEqual(
+    posts[0].body.sharing,
+    'unconfigured',
+    'l\'état du partage part tel quel : « coupé » et « jamais configuré » ne se disent pas du même mot'
   );
 
   // Rien qui ressemble à une position ni à une donnée de nav, à aucun niveau.

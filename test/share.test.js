@@ -5,7 +5,23 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { createShare, isDue, RETRY_MS } = require('../lib/share');
+const { createShare, isDue, stateOf, RETRY_MS } = require('../lib/share');
+
+// ── Où en est le partage : trois états, pas deux ───────────────────────────
+// C'est ce que le ping quotidien envoie tel quel. « Coupé » est une décision
+// prise ; « jamais renseigné » est un formulaire vide, et c'est la seule
+// population à qui le bandeau de la webapp a encore quelque chose à demander.
+// Les confondre en un booléen comptait comme des refus des gens qui n'avaient
+// jamais vu la question.
+const ON = { sharePolar: true, boatModel: 'Test 40', shareName: 'test' };
+assert.strictEqual(stateOf(ON), 'on');
+assert.strictEqual(stateOf(Object.assign({}, ON, { sharePolar: false })), 'off', 'coupé : une décision');
+assert.strictEqual(stateOf(Object.assign({}, ON, { boatModel: '' })), 'unconfigured', 'sans modèle : rien n\'a été décidé');
+assert.strictEqual(stateOf(Object.assign({}, ON, { shareName: '' })), 'unconfigured', 'sans nom non plus');
+// Coupé ET vide reste « coupé » : décocher la case est le geste le plus
+// explicite des deux, et c'est celui qu'on doit respecter en se taisant.
+assert.strictEqual(stateOf({ sharePolar: false }), 'off');
+assert.strictEqual(stateOf(), 'off', 'pas d\'options du tout : on n\'envoie rien');
 
 // ── La règle de déclenchement, nue ─────────────────────────────────────────
 const st = { lastCount: 500, lastTry: 0 };

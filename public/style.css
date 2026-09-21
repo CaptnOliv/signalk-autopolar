@@ -443,6 +443,20 @@ code { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color
 .supportbar .act.give { color: var(--ink); border-color: rgba(12, 163, 12, 0.45); }
 .supportbar .act.quiet { color: var(--muted); border-color: transparent; background: none; }
 .supportbar .act.quiet:hover { color: var(--ink-2); }
+/* Le bandeau du pot commun demande deux champs sur place. Ils tiennent sur la
+   même ligne que les boutons tant qu'il y a la place et passent dessous sur un
+   téléphone : c'est le seul endroit de cette page où l'on tape du texte, et il
+   vaut mieux qu'il ressemble au reste de la page qu'à un formulaire. */
+.supportbar .fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.supportbar .fields input[type='text'] {
+  background: var(--surface); border: 1px solid var(--hairline); color: var(--ink);
+  font: inherit; font-size: 12px; padding: 5px 9px; border-radius: 7px; min-width: 200px;
+}
+.supportbar .fields input[type='text']::placeholder { color: var(--muted); }
+/* Une ligne pour ce que le serveur a répondu — un enregistrement refusé se dit,
+   il ne se devine pas au fait que rien ne bouge. */
+.supportbar .said { flex-basis: 100%; font-size: 12px; color: var(--warning); }
+.supportbar .said.ok { color: var(--good); }
 
 /* Une seule règle pour les deux barres de liens, en haut et en bas : elles
    doivent se ressembler, donc elles se décrivent au même endroit. Seul le

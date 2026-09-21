@@ -28,7 +28,7 @@ const { createNotifier } = require('./lib/notify');
 const speedo = require('./lib/speedo');
 const leewayLib = require('./lib/leeway');
 const sailchange = require('./lib/sailchange');
-const { createShare } = require('./lib/share');
+const { createShare, stateOf: shareState } = require('./lib/share');
 const { createSupport } = require('./lib/support');
 const { createUsage, pingEndpointFrom } = require('./lib/usage');
 const { createUpdate } = require('./lib/update');
@@ -151,6 +151,7 @@ module.exports = function (app) {
   let notifier = null;
   let sharer = null;
   let supporter = null;
+  let sharePrompter = null;
   let usage = null;
   let updater = null;
   let sailSecs = 0;
@@ -267,7 +268,7 @@ module.exports = function (app) {
         type: 'boolean',
         title: 'Let me know this install exists',
         description:
-          'Once a day this sends, and nothing else: a random ID drawn once on this install (tied to nothing \u2014 not your boat name, not your hardware, not your network), the plugin version, the Node version, the SignalK version, the date that ID was drawn, and whether polar sharing is on. No position, no boat name, no polar, no IP address kept by the server. It is the only way I have of knowing whether anyone out there is running this plugin. The exact payload is readable at any time in the web app, under Share. The same ID travels with a shared polar as its key, so that your sends replace each other instead of colliding with another boat of the same name \u2014 turning this off stops the daily ping, not that key.',
+          'Once a day this sends, and nothing else: a random ID drawn once on this install (tied to nothing \u2014 not your boat name, not your hardware, not your network), the plugin version, the Node version, the SignalK version, the date that ID was drawn, and where polar sharing stands \u2014 one of on, off, or never set up. No position, no boat name, no polar, no IP address kept by the server. It is the only way I have of knowing whether anyone out there is running this plugin. The exact payload is readable at any time in the web app, under Share. The same ID travels with a shared polar as its key, so that your sends replace each other instead of colliding with another boat of the same name \u2014 turning this off stops the daily ping, not that key.',
         default: true,
       }, */
       /* checkForUpdates: {
@@ -1491,7 +1492,12 @@ module.exports = function (app) {
       node: process.version,
       signalk: (app && app.config && app.config.version) || null,
       firstSeen: st.firstSeen || null,
-      sharing: Boolean(opts.sharePolar && opts.boatModel && opts.shareName),
+      // Trois états et non un booléen (voir lib/share.js) : « coupé » est une
+      // décision, « jamais renseigné » est un formulaire vide. Confondus, ils
+      // faisaient passer pour des refus des installations qui n'avaient
+      // jamais vu la question — c'est-à-dire exactement celles que le bandeau
+      // de /api/share-prompt va voir.
+      sharing: shareState(opts),
     };
   }
 
@@ -2000,6 +2006,7 @@ module.exports = function (app) {
           endpoint: opts.shareEndpoint,
           every: opts.shareEveryPoints,
           configured: Boolean(opts.boatModel && opts.shareName),
+          state: shareState(opts),
           collected: store.diskInfo().runCount,
           nextAt: sharer ? sharer.nextAt(opts.shareEveryPoints) : null,
           lastAt: st.lastAt || null,
@@ -2086,6 +2093,24 @@ module.exports = function (app) {
     router.get('/api/support', (req, res) => {
       if (!supporter || !store) return res.json({ ask: false, why: 'not started', links: LINKS });
       const q = qualitySummary();
+      // Les deux demandes tombent au même jalon : elles ne peuvent donc pas
+      // tomber le même jour sur le même écran, sinon la page devient un mur de
+      // sollicitations à l'instant précis où elle vient de prouver sa valeur.
+      // Celle du pot commun passe devant — contribuer ne coûte rien et sert
+      // tout le monde, tandis que demander de l'argent peut attendre.
+      //
+      // La condition ne regarde pas `ask` : il retombe à faux dès que le
+      // bandeau du pot commun a été affiché (mise en sommeil), et les deux
+      // requêtes partent en parallèle au chargement de la page — les deux
+      // bandeaux finissaient par apparaître ensemble une fois sur deux, selon
+      // laquelle des deux arrivait la première. On regarde donc l'état durable :
+      // tant qu'il reste une demande de contribution en l'air, on ne parle pas
+      // d'argent. Pour un bateau qui ne partage pas, le café attend donc que
+      // cette question-là soit épuisée ou tranchée ; c'est le bon ordre.
+      const sp = sharePrompter ? sharePrompter.status(q.solidCells, true) : null;
+      if (sp && shareState(opts) !== 'on' && !sp.outcome && sp.remaining > 0 && sp.progress >= sp.milestone) {
+        return res.json({ ask: false, why: 'the shared-pool ask goes first', links: LINKS });
+      }
       res.json(
         Object.assign(supporter.status(q.solidCells, opts.supportPrompt), {
           links: LINKS,
@@ -2109,6 +2134,102 @@ module.exports = function (app) {
     router.post('/api/support/answer', (req, res) => {
       if (!supporter) return res.json({ ok: false });
       res.json({ ok: true, state: supporter.answer(String(body(req).outcome || '')) });
+    });
+
+    // ── Le pot commun, demandé quand la polaire vaut enfin quelque chose ───
+    // Même règle d'affichage que le coup de pouce (lib/support.js) et même
+    // jalon : 15 cases étayées par trois mesures ou plus. Ce qui change, c'est
+    // à qui la question est posée — à tout ce qui n'est pas « on ».
+    //
+    // En pratique c'est « off » qui est visé, et c'est voulu : une installation
+    // `unconfigured` ne collecte rien du tout (voir tick(), le modèle et le nom
+    // sont la condition de la collecte), donc sa polaire n'atteint jamais le
+    // moindre jalon — elle a déjà, en haut de la page, un avertissement qui dit
+    // que rien n'est collecté. Reste le bateau qui a décroché le partage et
+    // dont la polaire est devenue bonne : c'est le seul à qui il reste quelque
+    // chose à proposer, et on ne le lui propose qu'une fois la preuve faite.
+    // Demander avant, c'est quémander ; demander après, c'est proposer un
+    // échange — et « ne plus me demander » ferme la porte pour de bon.
+    router.get('/api/share-prompt', (req, res) => {
+      if (!sharePrompter || !store) return res.json({ ask: false, why: 'not started' });
+      const state = shareState(opts);
+      if (state === 'on') return res.json({ ask: false, why: 'sharing is on', state });
+      const q = qualitySummary();
+      res.json(
+        Object.assign(sharePrompter.status(q.solidCells, true), {
+          state,
+          points: q.points,
+          solidCells: q.solidCells,
+          windBands: q.windBands,
+          grade: q.grade,
+          model: opts.boatModel || '',
+          name: opts.shareName || '',
+          // Dit à l'écran plutôt que découvert au moment d'enregistrer : sur un
+          // serveur qui ne sait pas écrire sa configuration depuis un plugin,
+          // le bandeau renvoie au formulaire de l'admin au lieu d'un bouton mort.
+          canSave: typeof app.savePluginOptions === 'function' && typeof app.readPluginOptions === 'function',
+        })
+      );
+    });
+
+    // Consommé à l'affichage RÉEL, comme pour le coup de pouce : le serveur
+    // décide qu'il POURRAIT demander, la webapp seule sait qu'elle a demandé.
+    router.post('/api/share-prompt/seen', (req, res) => {
+      if (!sharePrompter || !store) return res.json({ ok: false });
+      sharePrompter.markShown(qualitySummary().solidCells);
+      res.json({ ok: true });
+    });
+
+    router.post('/api/share-prompt/answer', (req, res) => {
+      if (!sharePrompter) return res.json({ ok: false });
+      res.json({ ok: true, state: sharePrompter.answer(String(body(req).outcome || '')) });
+    });
+
+    // Le seul endroit où la webapp écrit dans la configuration du plugin, et
+    // il est tenu court. On repart de ce qui est SUR LE DISQUE, pas de `opts` :
+    // opts est aplati au démarrage (les groupes sources / polarBins / advanced
+    // y ont disparu), et le réécrire tel quel remonterait une quarantaine de
+    // réglages avancés d'un cran dans le fichier — un « oui » qui coûte ses
+    // réglages n'est pas un oui. Deux champs changent, plus le partage qu'on
+    // rallume : c'est précisément ce que le bouton annonce.
+    router.post('/api/share-prompt/save', (req, res) => {
+      if (!sharePrompter) return res.json({ ok: false, error: 'not started' });
+      const b = body(req);
+      const model = String(b.model || '').trim();
+      const name = String(b.name || '').trim();
+      if (!model || !name) return res.json({ ok: false, error: 'both the boat model and a name are needed' });
+      if (typeof app.savePluginOptions !== 'function' || typeof app.readPluginOptions !== 'function') {
+        return res.json({ ok: false, error: 'this SignalK server cannot save plugin settings from the web app' });
+      }
+      let cfg;
+      try {
+        cfg = Object.assign({}, (app.readPluginOptions() || {}).configuration || {}, {
+          boatModel: model,
+          shareName: name,
+          sharePolar: true,
+        });
+      } catch (e) {
+        return res.json({ ok: false, error: String((e && e.message) || e) });
+      }
+      app.savePluginOptions(cfg, (err) => {
+        if (err) return res.json({ ok: false, error: String((err && err.message) || err) });
+        // Enregistrer ne redémarre pas le plugin : ce qui vient d'être écrit
+        // doit donc prendre effet ici aussi, sinon le partage n'attendrait
+        // plus que deux champs déjà remplis — jusqu'au prochain redémarrage.
+        opts.boatModel = model;
+        opts.shareName = name;
+        opts.sharePolar = true;
+        // « shared » n'a pas besoin d'être définitif au sens de lib/support.js :
+        // la porte est fermée par l'état lui-même, puisque la route ne demande
+        // plus rien dès que le partage n'est plus `unconfigured`. On garde le
+        // geste pour savoir, en lisant le fichier, ce qui s'est passé.
+        sharePrompter.answer('shared');
+        // Le premier envoi part sans attendre le prochain palier : on vient de
+        // dire oui, la preuve que ça marche doit suivre dans la minute, pas
+        // dans 500 points.
+        if (sharer) sharer.force();
+        res.json({ ok: true, state: shareState(opts) });
+      });
     });
 
     // Un export porte une projection — SOG ou STW, vent vrai ou apparent,
@@ -2318,6 +2439,12 @@ module.exports = function (app) {
     // webapp, mais le moment où la polaire devient exploitable : 15 cases
     // étayées par au moins trois mesures. Avant ça, il n'y a rien à remercier.
     supporter = createSupport(path.join(dir, 'support.json'), { minProgress: 15, againAfterProgress: 15 });
+    // Même mécanique, même jalon, autre demande : le pot commun. Elle a son
+    // propre fichier d'état pour que répondre à l'une ne réponde pas pour
+    // l'autre — ce sont deux questions différentes posées au même moment,
+    // et ce moment est le seul où elles se valent : avant, il n'y a rien à
+    // montrer ; après, la polaire est déjà bonne et l'occasion est passée.
+    sharePrompter = createSupport(path.join(dir, 'share-prompt.json'), { minProgress: 15, againAfterProgress: 15 });
     // En debug : un ping raté n'est la panne de personne (voir lib/usage.js).
     usage = createUsage(path.join(dir, 'usage.json'), (m) => app.debug(`[polar] ${m}`));
     // Idem : au large la vérification échoue et ce n'est la panne de personne.

@@ -36,6 +36,21 @@ function node(v) {
 }
 const fakeApp = {
   getDataDirPath: () => dataDir,
+  // Le vrai serveur SignalK sait écrire la configuration d'un plugin sans le
+  // redémarrer, sous la forme { enabled, configuration } — c'est ce qui permet
+  // au bandeau du pot commun de demander le modèle et le nom sur place. On
+  // reproduit cette forme exacte, parce que c'est elle que la route doit
+  // respecter : un fichier de config qui remonte les groupes d'un cran coûte
+  // à l'équipage tous ses réglages avancés.
+  savedOptions: {
+    enabled: true,
+    configuration: { windowS: 30, polarBins: { twsBins: [6, 8, 10] }, advanced: { maxSampleMB: 50 } },
+  },
+  readPluginOptions: () => fakeApp.savedOptions,
+  savePluginOptions: (configuration, cb) => {
+    fakeApp.savedOptions = Object.assign({}, fakeApp.savedOptions, { configuration });
+    cb(null);
+  },
   setPluginStatus: () => {},
   debug: () => {},
   error: (e) => {
@@ -410,6 +425,45 @@ assert.strictEqual(call('GET /api/support').ask, false);
     call('POST /api/sail-reviewed/clear', {}, {});
   }
 }
+
+// ── Le pot commun ─────────────────────────────────────────────────────────
+// Le ping dit où en est le partage en trois états. Ce test tourne avec
+// sharePolar: false et une identité remplie : c'est « coupé », pas « jamais
+// configuré » — et c'est toute la différence, puisque l'un est une décision et
+// l'autre un formulaire vide.
+assert.strictEqual(JSON.parse(call('GET /api/usage.json')).sharing, 'off');
+// Le bandeau du pot commun vise ce cas précis — une polaire qui ne sort pas —
+// mais il ne dit rien avant d'avoir quelque chose à montrer : 20 points ne
+// valent aucune demande. La règle est testée nue dans support.test.js.
+const sp = call('GET /api/share-prompt');
+assert.strictEqual(sp.ask, false, 'rien à proposer avant que la polaire vaille quelque chose');
+assert.strictEqual(sp.why, 'milestone not reached');
+assert.strictEqual(sp.state, 'off');
+assert.strictEqual(sp.canSave, true, 'ce serveur sait enregistrer sa configuration');
+
+// Enregistrer depuis le bandeau : deux champs changent, le partage se rallume,
+// et SURTOUT rien d'autre ne bouge dans le fichier de configuration. C'est le
+// point qui mérite un test — `opts` est aplati au démarrage, et le réécrire
+// tel quel remonterait polarBins et advanced d'un cran.
+const savedBefore = fakeApp.savedOptions.configuration;
+const saved = call('POST /api/share-prompt/save', {}, { model: 'Beneteau Oceanis 48 (2013)', name: 'Jazzy' });
+assert.strictEqual(saved.ok, true);
+assert.strictEqual(saved.state, 'on');
+const cfg = fakeApp.savedOptions.configuration;
+assert.strictEqual(cfg.boatModel, 'Beneteau Oceanis 48 (2013)');
+assert.strictEqual(cfg.shareName, 'Jazzy');
+assert.strictEqual(cfg.sharePolar, true, 'dire oui rallume le partage');
+assert.deepStrictEqual(cfg.polarBins, savedBefore.polarBins, 'les groupes du schéma restent des groupes');
+assert.deepStrictEqual(cfg.advanced, savedBefore.advanced, 'et les réglages avancés restent à leur place');
+assert.strictEqual(fakeApp.savedOptions.enabled, true, 'le plugin ne se désactive pas au passage');
+// Pris en compte tout de suite : enregistrer ne redémarre pas le plugin.
+assert.strictEqual(JSON.parse(call('GET /api/usage.json')).sharing, 'on');
+assert.strictEqual(call('GET /api/share').configured, true);
+const spAfter = call('GET /api/share-prompt');
+assert.strictEqual(spAfter.ask, false, 'la question ne se repose plus');
+assert.strictEqual(spAfter.why, 'sharing is on');
+// Sans les deux champs, on n'écrit rien du tout.
+assert.strictEqual(call('POST /api/share-prompt/save', {}, { model: 'x' }).ok, false);
 
 // Tag de voilure.
 call('POST /api/sail', {}, { main: '1ris', head: 'genoa' });

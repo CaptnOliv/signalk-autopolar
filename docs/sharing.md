@@ -38,6 +38,16 @@ a design helps nobody, including you. Sharing itself is on by default and can
 be switched off in the same place; the plugin then works exactly as before, and
 only the pool stops growing.
 
+If you switch sharing off and the polar later becomes genuinely good — 15 cells
+standing on three measurements or more — the web app says so once, in a banner,
+and offers to put it in the pool right there: the model and the name are asked
+in the banner itself and written to the plugin configuration, and the first send
+leaves immediately rather than waiting for the next few hundred points. It
+appears at most twice in the life of the installation, never once sharing is on,
+and *don't ask again* ends it for good. The same milestone drives the star-and-
+coffee banner ([supporting the plugin](support.md)); the two never show up on the
+same screen, and this one goes first.
+
 What is sent is fixed — true wind, median per cell, wind angle as measured from
 the boat's axis — so that polars from different boats can be compared, and your
 display settings never change it.

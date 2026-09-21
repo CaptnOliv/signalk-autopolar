@@ -48,3 +48,17 @@ Preview the web app with no boat and no server:
 ```bash
 node test/preview.js   # http://localhost:8099/plugins/signalk-autopolar/
 ```
+
+The preview shares its polar, so the banner that offers to put it in the pool
+never shows there — which is precisely the thing you want to look at when you
+change it. Start it in the state the banner is written for:
+
+```bash
+PREVIEW_ASK=off node test/preview.js            # sharing switched off
+PREVIEW_ASK=unconfigured node test/preview.js   # no boat model, no name
+```
+
+The preview's fake server answers `savePluginOptions` like the real one, so the
+banner's **Share my polar** button really does write a configuration and really
+does send the polar — to `/dev/collect`, on the preview itself, never to the
+pool.

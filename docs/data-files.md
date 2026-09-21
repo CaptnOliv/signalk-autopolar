@@ -15,6 +15,8 @@ In the plugin data directory (`~/.signalk/plugin-config-data/signalk-autopolar/`
 | `declare.json` | the running "I am sailing" declaration, if any |
 | `share.json` | what has already been sent to the pool, and when |
 | `usage.json` | the random install ID, and when the daily ping last went out |
+| `support.json` | whether the star-and-coffee banner has been shown, and what was answered |
+| `share-prompt.json` | same, for the banner that offers to put the polar in the pool |
 
 Two fields are worth knowing about if you read those files by hand:
 

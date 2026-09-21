@@ -88,6 +88,15 @@ const fakeApp = {
   debug: () => {},
   getSelfPath: fakeBoat,
   getHistoryApi: async () => fakeHistoryApi,
+  // Le serveur SignalK sait écrire la configuration d'un plugin sans le
+  // redémarrer : sans ça, le bouton du bandeau « pot commun » serait un bouton
+  // mort dans l'aperçu, c'est-à-dire exactement ce qu'on veut pouvoir voir.
+  savedOptions: { enabled: true, configuration: {} },
+  readPluginOptions: () => fakeApp.savedOptions,
+  savePluginOptions: (configuration, cb) => {
+    fakeApp.savedOptions = Object.assign({}, fakeApp.savedOptions, { configuration });
+    cb(null);
+  },
 };
 const realSetInterval = global.setInterval;
 let captured = null;
@@ -98,12 +107,17 @@ global.setInterval = (fn) => {
 const plugin = require('../index.js')(fakeApp);
 // Le partage part vers un puits local : l'aperçu doit exercer tout le chemin
 // (palier, envoi, état affiché) sans jamais écrire dans le vrai fonds commun.
-const IDENT = {
-  boatModel: 'Example 40',
-  shareName: 'preview',
-  shareEndpoint: 'http://127.0.0.1:8099/dev/collect',
-  shareEveryPoints: 500,
-};
+// Le bandeau du pot commun ne s'affiche qu'à un bateau qui ne partage pas :
+// c'est tout son propos, et l'aperçu partage. PREVIEW_ASK=off démarre donc
+// avec le partage décroché (le cas réel : une polaire devenue bonne qui ne
+// sort pas), PREVIEW_ASK=unconfigured sans modèle ni nom. Sans ça, il n'y a
+// aucun moyen de regarder ce bandeau ailleurs qu'en production.
+const ASK = process.env.PREVIEW_ASK || '';
+const IDENT = Object.assign(
+  { shareEndpoint: 'http://127.0.0.1:8099/dev/collect', shareEveryPoints: 500 },
+  ASK === 'unconfigured' ? {} : { boatModel: 'Example 40', shareName: 'preview' },
+  ASK === 'off' ? { sharePolar: false } : {}
+);
 plugin.start(Object.assign({}, IDENT));
 global.setInterval = realSetInterval;
 // On fait tourner la boucle du plugin pour de vrai : c'est elle qui remplit

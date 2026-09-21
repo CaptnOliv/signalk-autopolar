@@ -14,7 +14,7 @@ So, once a day, the plugin says that it exists. It sends this and nothing else:
 | plugin version | so I know which versions are actually out there before breaking anything |
 | Node and SignalK versions | same reason |
 | the date the ID was drawn | to tell a new install from an old one |
-| whether sharing is on | the only way to know how many people keep the plugin but decline the pool |
+| where sharing stands — `on`, `off` or `unconfigured` | the only way to know how many people keep the plugin but decline the pool. It used to be a yes/no, which could not tell *"I switched it off"* from *"I never filled the form in"* — and those are not the same person. The first made a decision; the second was never really shown the question, and is running a plugin that collects nothing at all |
 
 No position. No boat name. No polar. **No IP address is kept by the server.**
 The exact payload is readable at any time in the web app, under Share → *See

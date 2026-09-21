@@ -1590,7 +1590,8 @@ function usageNote(u) {
   const seen = u.lastSentAt ? new Date(u.lastSentAt).toLocaleDateString() : 'not yet';
   return ``;
   /*<div class="hint">Once a day, separately from the polar, the plugin says that this install exists:
-    a random ID, the versions, and whether sharing is on — no position, no boat name, no polar. It is the only
+    a random ID, the versions, and where sharing stands (on, off, or never set up) — no position, no boat name,
+    no polar. It is the only
     count of how many boats run this. Last sent: <b>${seen}</b>.
     <button class="linklike" id="btnUsageSee">See exactly what that ping contains</button>. Switch it off with
     <i>Let me know this install exists</i> in the plugin configuration.</div>`;*/
@@ -1775,6 +1776,147 @@ async function refreshSupport() {
   $('#supKofi').addEventListener('click', () => close('donate'));
   $('#supLater').addEventListener('click', () => close('later'));
   $('#supNever').addEventListener('click', () => close('never'));
+}
+
+// ── Le pot commun, demandé au moment où la polaire vaut quelque chose ───────
+//
+// Même jalon que le coup de pouce, et c'est le serveur qui garantit qu'on ne
+// voit jamais les deux le même jour : /api/support se tait tant que celui-ci
+// a quelque chose à demander. Contribuer ne coûte rien et sert tout le monde ;
+// demander de l'argent peut attendre le jalon suivant.
+//
+// Deux différences avec l'autre bandeau, et elles tiennent aux mêmes raisons
+// retournées :
+//   — il s'affiche hors ligne. Il n'y a aucun lien externe à ouvrir, rien à
+//     brûler : enregistrer écrit dans la configuration du serveur du bord, et
+//     la polaire partira d'elle-même au retour du réseau.
+//   — les deux champs sont ici, pas dans l'admin SignalK. Renvoyer vers un
+//     autre onglet, c'est faire quitter la page qui vient tout juste de donner
+//     la raison de dire oui — et ce qui revient de cet onglet-là, c'est
+//     personne.
+let sharePromptShown = false;
+
+async function refreshSharePrompt() {
+  const el = $('#sharePrompt');
+  if (!el || sharePromptShown) return;
+  let d;
+  try {
+    d = await (await fetch(`${API}/api/share-prompt`)).json();
+  } catch (e) {
+    return;
+  }
+  if (!d.ask) return;
+  sharePromptShown = true;
+
+  // On dit d'abord ce que la polaire vaut MAINTENANT, et seulement ensuite ce
+  // qu'on demande. C'est la même règle que pour le coup de pouce : ce qui rend
+  // la question légitime, c'est qu'elle arrive après la preuve — et ici la
+  // preuve est aussi l'argument, puisque c'est précisément cette polaire-là
+  // qui vaut quelque chose à quelqu'un d'autre.
+  const ask = d.canSave
+    ? `<div class="fields">
+         <input type="text" id="spModel" placeholder="Boat model — e.g. Beneteau Oceanis 48 (2013)">
+         <input type="text" id="spName" placeholder="Name to publish under — a pseudonym is fine">
+         <button class="act give" id="spSave">Share my polar</button>
+         <button class="act quiet" id="spLater">Later</button>
+         <button class="act quiet" id="spNever">Don't ask again</button>
+       </div>`
+    : `<div class="acts">
+         <a class="act give" href="/admin/#/serverConfiguration/plugins/signalk-autopolar"
+            target="_blank" rel="noopener">Open the plugin settings</a>
+         <button class="act quiet" id="spLater">Later</button>
+         <button class="act quiet" id="spNever">Don't ask again</button>
+       </div>
+       <div class="said">This server cannot save plugin settings from here — the boat model and the name are
+         set in SignalK → Server → Plugin Config → Autopolar.</div>`;
+
+  // Ce que la personne a sous les yeux n'est pas le même selon l'état : celui
+  // qui a décroché le partage sait très bien qu'il l'a fait, et le lui cacher
+  // derrière une formule générale serait la meilleure façon de se faire fermer
+  // la porte. On le dit, donc, et on demande ensuite.
+  const lead =
+    d.state === 'off'
+      ? 'Sharing is off, so that polar stays on this boat.'
+      : 'A boat model and a name to publish under are all that is missing.';
+  el.innerHTML =
+    `<div class="txt">Your polar now stands on <b>${d.solidCells}</b> cells backed by three measurements or more,
+       across <b>${d.windBands}</b> wind band(s) — measured on your boat, with your sails and your waterline.
+       ${lead}
+       <span class="why">It is worth something to the next owner of the same design, who today has nothing but the
+       builder's brochure figure — produced on a clean hull with new sails and no crew luggage. Autopolar is free;
+       the pool is what it asks in exchange, and it fills on its own, a few hundred points at a time.
+       <b>Nothing collected here contains a position</b> — not one latitude, not one longitude. The name is free
+       text, your boat's or a pseudonym, and nothing checks it; everything that would leave the boat is readable
+       under Share, below.</span></div>` +
+    ask;
+  el.hidden = false;
+  // Les champs sont remplis par le DOM, pas par le HTML : ce qui revient de la
+  // configuration a été tapé par quelqu'un, et n'a rien à faire dans une
+  // chaîne interprétée.
+  if (d.canSave) {
+    $('#spModel').value = d.model || '';
+    $('#spName').value = d.name || '';
+  }
+  // Consommé maintenant : la demande est à l'écran, même si l'onglet se ferme
+  // dans la seconde.
+  post('/api/share-prompt/seen', {});
+
+  // Répondre ici ferme aussi la porte au coup de pouce POUR CE CHARGEMENT de
+  // page. Le serveur ne peut pas le faire : à la seconde où cette demande est
+  // tranchée, l'autre redevient éligible, et un rafraîchissement (revenir sur
+  // l'onglet, par exemple) faisait apparaître le café dans la foulée du « non »
+  // qu'on venait de dire. Une demande par écran ; l'autre reviendra au
+  // prochain chargement, où elle aura toute la place.
+  const close = (outcome) => {
+    post('/api/share-prompt/answer', { outcome });
+    supportShown = true;
+    el.hidden = true;
+    el.innerHTML = '';
+  };
+  $('#spLater').addEventListener('click', () => close('later'));
+  $('#spNever').addEventListener('click', () => close('never'));
+  if (!d.canSave) return;
+
+  $('#spSave').addEventListener('click', async () => {
+    const b = $('#spSave');
+    const model = $('#spModel').value.trim();
+    const name = $('#spName').value.trim();
+    const say = (msg, ok) => {
+      let line = el.querySelector('.said');
+      if (!line) {
+        line = document.createElement('div');
+        line.className = 'said';
+        el.appendChild(line);
+      }
+      line.className = ok ? 'said ok' : 'said';
+      line.textContent = msg;
+    };
+    if (!model || !name) return say('Both the boat model and a name are needed.', false);
+    b.disabled = true;
+    b.textContent = 'Saving…';
+    let r;
+    try {
+      r = await post('/api/share-prompt/save', { model, name });
+    } catch (e) {
+      r = { ok: false, error: 'the server did not answer' };
+    }
+    if (!r || !r.ok) {
+      b.disabled = false;
+      b.textContent = 'Share my polar';
+      return say(`${(r && r.error) || 'could not save'} — you can still set both in SignalK → Server → Plugin
+        Config → Autopolar.`, false);
+    }
+    // Enregistré : on ne laisse pas le bandeau tel quel avec un bouton grisé.
+    // Ce qui suit est la seule chose que la personne veut savoir — c'est parti,
+    // et la suite se passe toute seule. Et surtout : pas de café dans la
+    // seconde qui suit un oui (même raison que dans close()).
+    supportShown = true;
+    el.innerHTML =
+      `<div class="txt">Thank you — your polar is on its way to the pool, and every few hundred new points it
+         will be replaced by a better version of itself. Nothing else to do. <span class="why">Everything that
+         leaves the boat is readable under Share, below, at any time.</span></div>`;
+    refreshShare();
+  });
 }
 
 // ── Contrôles ───────────────────────────────────────────────────────────────
@@ -2197,6 +2339,7 @@ function refreshAll(resetBins) {
   refreshSailHistory();
   refreshShare();
   refreshSupport();
+  refreshSharePrompt();
   refreshSailCompare();
   refreshHabits();
   refreshUpdate();
@@ -2217,6 +2360,7 @@ refreshLeeway();
 refreshSailHistory();
 refreshShare();
 refreshSupport();
+refreshSharePrompt();
 refreshSailCompare();
 refreshHabits();
 refreshUpdate();
@@ -2240,3 +2384,4 @@ setInterval(refreshSailHistory, 900000);
 // Le jalon peut tomber pendant qu'une longue nav est en cours et la page
 // ouverte. Un quart d'heure suffit largement : rien ne presse.
 setInterval(refreshSupport, 900000);
+setInterval(refreshSharePrompt, 900000);

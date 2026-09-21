@@ -49,6 +49,16 @@
      lib/support.js. -->
 <div class="supportbar" id="support" hidden></div>
 
+<!-- Le pot commun, demandé au même jalon et jamais en même temps que le coup
+     de pouce : le serveur fait taire l'un tant que l'autre a quelque chose à
+     dire (voir /api/support dans index.js). Celui-ci ne va nulle part — les
+     deux champs sont dans le bandeau, parce qu'envoyer vers le formulaire de
+     l'admin SignalK ferait quitter la page qui vient de donner la raison de
+     dire oui. Il s'affiche aussi hors ligne, contrairement au coup de pouce :
+     il n'y a aucun lien à ouvrir, et au mouillage sans réseau enregistrer
+     marche très bien. -->
+<div class="supportbar" id="sharePrompt" hidden></div>
+
 <!-- La qualité de la polaire, avant tout le reste : c'est elle qui dit si on
      peut déjà s'en servir, et sinon ce qu'il reste à naviguer. -->
 <div class="qualitybar" id="quality"></div>
