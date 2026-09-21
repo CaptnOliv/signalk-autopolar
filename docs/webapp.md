@@ -8,13 +8,23 @@ metadata and serves only the API (`/api/...`).
 
 - **Live state** — recording or not, and exactly why; progress of the current
   window; every input with its freshness and age.
+- **Pause** — one click and nothing is recorded at all, points *or* raw log.
+  One hour by default, then 1 h / 4 h / until you resume. Survives a restart,
+  lifts itself when timed. See [Pausing Autopolar](pause.md).
 - **Sail plan** — a manual selector attached to the recorded points. Main:
-  full, 1 / 2 / 3 reefs. Headsail (one at a time): genoa or jib, each
-  full / 1 reef / 2 reefs / furled, or gennaker — the reef selector disappears
-  for the gennaker, which does not reef. Optional. Changing it flushes the
-  current window, which described a different boat.
+  full, 1 / 2 / 3 reefs, or **no main**. Headsail (one at a time): genoa or
+  jib, each full / 1 reef / 2 reefs / furled, gennaker — the reef selector
+  disappears for the gennaker, which does not reef — or **no headsail**.
+  Optional. Changing it flushes the current window, which described a
+  different boat. "No main" and "no headsail" are not the same thing as the
+  blank entry: they say a sail is deliberately down, and those points are kept
+  but left out of the polar you route with. See [test rigs](test-rigs.md).
+- **Test rigs** — a control that appears only once you have sailed with a sail
+  deliberately down, and brings those points back into the curve. See
+  [test rigs](test-rigs.md).
 - **Sail-plan filter** — built from the combinations you have *actually*
-  sailed, with their point counts. This is what makes the tagging worth doing:
+  sailed, with their point counts. Test configurations are drawn with a dashed
+  border; picking one lifts their exclusion for that query. This is what makes the tagging worth doing:
   "full main + genoa" against "one reef + genoa" at the same wind and angle is
   a directly readable answer.
 - **Diagram** — up to 5 wind speeds at once (beyond that neighbouring curves

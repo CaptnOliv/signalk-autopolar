@@ -79,6 +79,12 @@
   <!-- N'apparaît que sur un bateau sans aucune donnée moteur : ailleurs, ce
        serait proposer de contredire une mesure par une déclaration. -->
   <div class="row-actions" id="declare"></div>
+  <!-- La pause. Toujours offerte, contrairement à la déclaration : tout bateau
+       a un jour une raison de ne pas vouloir enregistrer — un convoyage, un
+       remorquage, un après-midi d'essais de réglage. Le bandeau reste bien
+       visible tant qu'elle dure, parce que la seule vraie façon de se tromper
+       ici est d'oublier qu'on a mis en pause. -->
+  <div class="row-actions" id="pauseBox"></div>
   <div class="tiles" id="tiles"></div>
   <div class="metrics" id="metrics"></div>
   <div class="hint" id="liveHint"></div>
@@ -155,6 +161,19 @@
         <div class="group" id="draftGroup" hidden>
           <label>History API</label>
           <div class="seg" data-key="history" title="Points drafted from the server history store">
+            <button data-v="on">included</button><button data-v="off">hidden</button>
+          </div>
+        </div>
+        <!-- Les navigations avec une voile explicitement absente — sans
+             grand-voile, au seul génois — sont des essais, pas la polaire du
+             bateau. Elles sortent par défaut ; ce groupe sert à les regarder
+             quand même, et reste caché tant qu'aucune n'a été enregistrée.
+             Sélectionner cette voilure dans le filtre ci-dessous les rallume
+             de toute façon : on ne demande pas à voir quelque chose pour
+             s'entendre répondre « vide ». -->
+        <div class="group" id="testRigGroup" hidden>
+          <label>Test rigs</label>
+          <div class="seg" data-key="testRig" title="Sailing with a sail deliberately not set (no main, no headsail)">
             <button data-v="on">included</button><button data-v="off">hidden</button>
           </div>
         </div>

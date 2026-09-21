@@ -426,6 +426,119 @@ assert.strictEqual(call('GET /api/support').ask, false);
   }
 }
 
+// ── Pause ─────────────────────────────────────────────────────────────────
+// En pause, RIEN ne rentre. Le second point est celui qui compte vraiment :
+// n'arrêter que les points laisserait le journal brut grandir, et le premier
+// rejeu ressusciterait exactement ce qu'on voulait laisser dehors.
+{
+  const before = call('GET /api/status').disk;
+  call('POST /api/pause', {}, {});
+  const live = call('GET /api/live');
+  assert.ok(live.pause, 'la pause voyage avec l\'état en direct, pas seulement avec le statut');
+  assert.strictEqual(live.pause.until, null, 'sans durée, la pause va jusqu\'à la reprise');
+
+  run(180, closeHauled(100, 45));
+  // `reason` ne se met à jour qu'au tick, alors que `pause` part dès la
+  // réponse du POST : c'est voulu, et c'est `pause` que le bandeau lit — la
+  // pastille d'état, elle, peut accuser une seconde de retard sans gêner.
+  assert.strictEqual(call('GET /api/live').reason, 'paused');
+  const during = call('GET /api/status').disk;
+  assert.strictEqual(during.runCount, before.runCount, 'aucun point pendant la pause');
+  assert.strictEqual(during.sampleBytes, before.sampleBytes, 'et aucune ligne de brut non plus');
+
+  // Reprendre remet la collecte en marche — sinon la pause serait un
+  // aller simple, ce que personne ne cliquerait deux fois.
+  call('POST /api/pause', {}, { on: false });
+  assert.strictEqual(call('GET /api/live').pause, null);
+  run(180, closeHauled(100, 45));
+  assert.ok(call('GET /api/status').disk.runCount > before.runCount, 'la collecte repart après la reprise');
+
+  // Une pause bornée se lève TOUTE SEULE. C'est la seule protection contre la
+  // pause d'une heure qu'on retrouve trois mois plus tard, et elle se vérifie
+  // en avançant l'horloge, pas en faisant confiance au commentaire.
+  call('POST /api/pause', {}, { minutes: 1 });
+  assert.ok(call('GET /api/status').pause.until > Date.now(), 'une pause bornée porte son échéance');
+  const paused = call('GET /api/status').disk.runCount;
+  run(30, closeHauled(100, 45));
+  assert.strictEqual(call('GET /api/status').disk.runCount, paused, 'toujours rien tant qu\'elle court');
+  now += 90000;
+  assert.strictEqual(call('GET /api/status').pause, null, 'passé l\'échéance, la pause a disparu d\'elle-même');
+  run(180, closeHauled(100, 45));
+  assert.ok(call('GET /api/status').disk.runCount > paused, 'et la collecte a repris sans un clic');
+}
+
+// ── Voilure d'essai : « none » n'est pas « non renseigné » ────────────────
+// Naviguer sans grand-voile est une information, pas un oubli. Les points
+// restent collectés et consultables, mais ils sortent de la polaire qu'on
+// utilise — un week-end d'essais au seul génois ne doit pas creuser la table
+// qui sert à router.
+{
+  const cellsOf = (q) =>
+    call('GET /api/polar', Object.assign({ min: '1', smooth: '0' }, q)).bins.reduce(
+      (a, b) => a + b.cells.reduce((x, c) => x + (c.n || 0), 0),
+      0
+    );
+  const baseline = cellsOf({});
+
+  call('POST /api/sail', {}, { main: 'none', head: 'genoa-full' });
+  run(300, closeHauled(100, 45));
+  assert.deepStrictEqual(call('GET /api/status').sail, { main: 'none', head: 'genoa-full' });
+
+  // Les points existent bel et bien : c'est ce qui distingue « écarté » de
+  // « jamais collecté », et c'est la moitié de la demande.
+  const tag = (call('GET /api/status').sailTags || []).find((t) => t.main === 'none');
+  assert.ok(tag && tag.n > 0, `des points ont été collectés sous voilure d'essai : ${JSON.stringify(tag)}`);
+
+  // …et pourtant la polaire par défaut ne bouge pas.
+  assert.strictEqual(cellsOf({}), baseline, "la polaire par défaut ignore les points d'essai");
+  // Deux façons de les rallumer, et les deux doivent marcher.
+  assert.ok(cellsOf({ testRig: '1' }) > baseline, 'le réglage « included » les fait revenir');
+  assert.ok(
+    cellsOf({ main: 'none', head: 'genoa-full' }) > 0,
+    'demander explicitement cette voilure dans le filtre suffit à la voir — sans quoi le filtre renverrait toujours vide'
+  );
+
+  // Le pot commun, lui, ne les reçoit jamais : on reverse la polaire du
+  // bateau, pas celle de son week-end d'essais.
+  const shared = JSON.parse(call('GET /api/share.json'));
+  const sharedN = shared.bins.reduce((a, b) => a + b.cells.reduce((x, c) => x + (c.n || 0), 0), 0);
+  assert.ok(sharedN > 0, 'le partage porte quand même une polaire');
+  assert.strictEqual(
+    cellsOf({ shared: '1' }),
+    cellsOf({ shared: '1', testRig: '1' }),
+    "le partage écarte les essais quel que soit le réglage d'affichage"
+  );
+
+  call('POST /api/sail', {}, { main: '1ris', head: 'genoa' });
+}
+
+// ── Exclure une plage entière ─────────────────────────────────────────────
+// Depuis « Sail plan over time » on écarte une période, pas des identifiants.
+// Les points restent sur le disque : c'est réversible, et le compte le dit.
+{
+  const st = call('GET /api/status');
+  const from = st.first;
+  const to = from + 120000;
+  const before = st.excluded;
+
+  const r = call('POST /api/exclude-range', {}, { from, to });
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.n > 0, `des points dans la plage : ${r.n}`);
+  assert.strictEqual(r.excluded, before + r.n);
+  // Rien n'a été effacé — seulement mis de côté.
+  assert.strictEqual(call('GET /api/status').disk.runCount, st.disk.runCount, 'exclure n\'efface rien');
+
+  // La période le dit dans la liste, ce qui est le seul moyen de proposer
+  // « restore » plutôt que « exclude » une fois le geste fait.
+  const seg = call('GET /api/sail-suggest').segments.find((x) => x.from >= from && x.to <= to);
+  if (seg) assert.ok(seg.excluded > 0, 'le segment porte son compte de points écartés');
+
+  const back = call('POST /api/exclude-range', {}, { from, to, excluded: false });
+  assert.strictEqual(back.excluded, before, 'restore remet exactement ce qui avait été écarté');
+  // Une plage sans bornes valides ne touche à rien plutôt que de tout écarter.
+  assert.strictEqual(call('POST /api/exclude-range', {}, {}).ok, false);
+}
+
 // ── Le pot commun ─────────────────────────────────────────────────────────
 // Le ping dit où en est le partage en trois états. Ce test tourne avec
 // sharePolar: false et une identité remplie : c'est « coupé », pas « jamais

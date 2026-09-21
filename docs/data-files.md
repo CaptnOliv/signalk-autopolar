@@ -13,6 +13,7 @@ In the plugin data directory (`~/.signalk/plugin-config-data/signalk-autopolar/`
 | `history.json` | what has been imported (range, resolution), and the cached live-coverage index |
 | `sail.json` | the current sail plan |
 | `declare.json` | the running "I am sailing" declaration, if any |
+| `pause.json` | the running pause, if any — `{ since, until }`, `until: null` meaning "until I resume" |
 | `share.json` | what has already been sent to the pool, and when |
 | `usage.json` | the random install ID, and when the daily ping last went out |
 | `support.json` | whether the star-and-coffee banner has been shown, and what was answered |

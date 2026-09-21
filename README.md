@@ -43,6 +43,13 @@ sail a single test run.
   the plugin suggest boundaries from steps in performance — corrections never
   touch the raw measurements. → [Fixing the sail plan after the
   fact](docs/sail-plan-history.md)
+- 🔥 **Test rigs stay out of the way.** Sailing with the main down on purpose is
+  a measurement, not a mistake: those points are kept and studied, and left out
+  of the polar you route with and of everything shared. →
+  [Sailing without a sail, on purpose](docs/test-rigs.md)
+- 🔥 **Pausable.** A delivery, a tow, an afternoon of trim tests: one click and
+  nothing is written — points *or* raw log, so a replay cannot bring it back. →
+  [Pausing Autopolar](docs/pause.md)
 - 🔥 **Sea state measured, not typed in.** Peak-to-peak pitch over the window,
   stored raw. → [Sea state](docs/sea-state.md)
 - 🔥 **Drafts a polar from your server's history**, months before the plugin was

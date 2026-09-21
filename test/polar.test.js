@@ -240,4 +240,42 @@ assert.throws(
   assert.strictEqual(shared.value, 7.0);
 }
 
+// ── Voilure d'essai : « none » n'est pas « non renseigné » ────────────────
+// La distinction porte toute la fonctionnalité : une voile explicitement
+// absente est une information, une étiquette vide n'en est pas une. Confondre
+// les deux ferait disparaître de la polaire l'immense majorité des points, qui
+// n'ont jamais reçu d'étiquette.
+{
+  assert.strictEqual(p.isTestRig({ main: 'none', head: 'genoa-full' }), true);
+  assert.strictEqual(p.isTestRig({ main: 'full', head: 'none' }), true);
+  assert.strictEqual(p.isTestRig({ main: 'full', head: 'genoa-r1' }), false);
+  assert.strictEqual(p.isTestRig({ main: '', head: '' }), false, '« non renseigné » n\'est pas un essai');
+  assert.strictEqual(p.isTestRig(null), false);
+  // Les voiles d'avant anciennes sont en français sur le disque : le verdict
+  // doit passer par la normalisation, comme le filtre.
+  assert.strictEqual(p.isTestRig({ main: 'none', head: 'genois-rolled' }), true);
+
+  const runs = [
+    { id: 1, sog: 7.0, twa: 130, tws: 16, engineSource: 'rpm', sail: { main: 'full', head: 'genoa-full' } },
+    { id: 2, sog: 4.0, twa: 130, tws: 16, engineSource: 'rpm', sail: { main: 'none', head: 'genoa-full' } },
+    { id: 3, sog: 6.8, twa: 130, tws: 16, engineSource: 'rpm', sail: {} },
+  ];
+  const o = { twsBins: [16], twaStep: 10, minSamples: 1, smooth: false };
+  const all = p.buildPolar(runs, o).bins[0].cells.find((c) => c.twa === 130);
+  const routing = p.buildPolar(runs, Object.assign({ excludeTestRig: true }, o)).bins[0].cells.find((c) => c.twa === 130);
+  assert.strictEqual(all.n, 3, 'tout confondu, les trois comptent');
+  assert.strictEqual(routing.n, 2, "la polaire qui sert à router laisse l'essai dehors");
+  assert.ok(routing.value > all.value, "et elle ne se fait plus tirer vers le bas par le bord sans grand-voile");
+
+  // Une correction posée après coup doit être prise en compte : c'est
+  // justement comme ça qu'on rattrape un bord d'essai qu'on avait oublié
+  // d'étiqueter sur le moment.
+  const ranges = [{ from: 0, to: 10, main: 'none', head: 'genoa-full' }];
+  const late = p.buildPolar(
+    [{ id: 4, ts: 5, sog: 4.0, twa: 130, tws: 16, engineSource: 'rpm', sail: { main: 'full', head: 'genoa-full' } }],
+    Object.assign({ excludeTestRig: true, sailRanges: ranges }, o)
+  ).bins[0].cells.find((c) => c.twa === 130);
+  assert.ok(!late || !late.n, 'une plage corrigée en « no main » écarte le point après coup');
+}
+
 console.log('polar: ok');

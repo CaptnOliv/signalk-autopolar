@@ -41,13 +41,24 @@ const ui = {
   // Points reconstruits depuis l'historique du serveur : inclus par défaut,
   // sinon l'ébauche qu'on vient d'importer n'apparaîtrait nulle part.
   history: 'on',
+  // Les voilures d'essai, elles, sont exclues par défaut : c'est tout l'objet
+  // de l'étiquette « none ». L'inverse de `history`, et pour la raison
+  // inverse — l'ébauche, on veut la voir ; l'essai, on veut l'oublier jusqu'à
+  // ce qu'on le demande.
+  testRig: 'off',
 };
 
-const MAIN_SAILS = [['', '—'], ['full', 'full'], ['r1', '1 reef'], ['r2', '2 reefs'], ['r3', '3 reefs']];
+// « — » et « none » ne disent PAS la même chose, et c'est toute l'utilité du
+// second : « — » veut dire « je n'ai rien renseigné », « none » veut dire
+// « il n'y a pas de grand-voile ». Le premier est l'état par défaut de
+// millions de points et n'autorise aucune conclusion ; le second est une
+// information, et celle-là suffit à écarter les points de la polaire qui sert
+// à router (voir isTestRig() dans lib/polar.js).
+const MAIN_SAILS = [['', '—'], ['none', 'no main'], ['full', 'full'], ['r1', '1 reef'], ['r2', '2 reefs'], ['r3', '3 reefs']];
 // Une seule voile d'avant à la fois. Le génois et la trinquette se réduisent,
 // le gennaker non : le second segment disparaît quand il n'a pas de sens,
 // plutôt que d'offrir des combinaisons qui n'existent pas sur le bateau.
-const HEAD_SAILS = [['', '—'], ['genoa', 'genoa'], ['jib', 'jib'], ['gennaker', 'gennaker']];
+const HEAD_SAILS = [['', '—'], ['none', 'no headsail'], ['genoa', 'genoa'], ['jib', 'jib'], ['gennaker', 'gennaker']];
 const HEAD_REEFS = [['full', 'full'], ['r1', '1 reef'], ['r2', '2 reefs'], ['furled', 'furled']];
 const REEFABLE = new Set(['genoa', 'jib']);
 const LABEL = (list, v) => (list.find(([k]) => k === v) || [null, v])[1];
@@ -58,13 +69,20 @@ const LABEL = (list, v) => (list.find(([k]) => k === v) || [null, v])[1];
 function sailLabel(sail) {
   if (!sail || (!sail.main && !sail.head)) return '—';
   const parts = [];
-  if (sail.main) parts.push(`Main ${LABEL(MAIN_SAILS, sail.main)}`);
+  // « no main » se lit tel quel : « Main no main » est du charabia, et c'est
+  // justement l'étiquette qu'on veut repérer d'un coup d'œil dans une liste.
+  if (sail.main) parts.push(sail.main === 'none' ? 'no main' : `Main ${LABEL(MAIN_SAILS, sail.main)}`);
   if (sail.head) {
     const { sail: h, reef } = splitHead(sail.head);
     parts.push(REEFABLE.has(h) ? `${LABEL(HEAD_SAILS, h)} ${LABEL(HEAD_REEFS, reef)}` : LABEL(HEAD_SAILS, h));
   }
   return parts.join(' + ');
 }
+
+// Le même verdict que isTestRig() côté serveur, et il doit le rester : c'est
+// lui qui décide si une pastille de filtre porte la marque « test ».
+const isTestRig = (sail) =>
+  !!sail && (sail.main === 'none' || String(sail.head || '').split('-')[0] === 'none');
 
 const composeHead = (sail, reef) => (!sail ? '' : REEFABLE.has(sail) ? `${sail}-${reef || 'full'}` : sail);
 const splitHead = (head) => {
@@ -117,10 +135,14 @@ async function refreshLive() {
   }</span>`;
 
   renderDeclare(live.engine);
+  renderPause(live);
 
   // Dire explicitement qu'une collecte à l'arrêt n'est pas une panne, quand
   // c'est le cas : c'est la lecture qui prête à confusion, pas l'état.
-  $('#stateWhy').textContent = allOk && !rec ? 'data is coming in fine — collecting will resume under sail' : '';
+  // En pause, surtout pas : « ça reprendra sous voile » serait un mensonge,
+  // et c'est précisément le mensonge qui ferait chercher la panne ailleurs.
+  $('#stateWhy').textContent =
+    live.pause ? '' : allOk && !rec ? 'data is coming in fine — collecting will resume under sail' : '';
 
   const pct = live.windowS ? Math.min(100, (100 * (live.bufferLen || 0)) / live.windowS) : 0;
   $('#progress').style.width = pct + '%';
@@ -282,6 +304,45 @@ function renderDeclare(e) {
     });
 }
 
+// ── Pause ───────────────────────────────────────────────────────────────────
+// En pause, plus rien ne s'enregistre — ni points, ni journal brut. Le bandeau
+// est donc volontairement voyant et ne se replie jamais : la seule façon de se
+// tromper avec une pause est de ne plus se rappeler qu'elle est là, et de
+// rentrer d'une belle nav sans un point.
+//
+// Les durées sont là pour ça. « Jusqu'à reprise » existe parce qu'une saison
+// d'essais existe, mais ce n'est pas ce qu'on propose en premier.
+const PAUSE_CHOICES = [[60, '1 h'], [240, '4 h'], [0, 'until I resume']];
+
+function renderPause(e) {
+  const el = $('#pauseBox');
+  if (!el) return;
+  const p = e && e.pause;
+  if (!p) {
+    el.innerHTML = '<button class="act" data-pause="0" data-mins="60">Pause recording…</button>';
+  } else {
+    // Un compte à rebours plutôt qu'une heure de fin : « 38 min left » se lit
+    // sans calcul au poste de barre, « until 14:07 » demande de savoir l'heure.
+    const left = p.until ? Math.max(0, Math.round((p.until - Date.now()) / 60000)) : null;
+    el.innerHTML =
+      `<span class="msg warn">⏸ <b>Paused</b> — nothing is being recorded${
+        left == null ? ', until you resume' : ` · <b>${left} min</b> left`
+      }.</span>` +
+      PAUSE_CHOICES.map(([m, label]) => `<button class="act" data-pause="1" data-mins="${m}">${label}</button>`).join('') +
+      '<button class="act give" data-pause="resume">Resume</button>';
+  }
+  for (const b of el.querySelectorAll('button'))
+    b.addEventListener('click', async () => {
+      const resume = b.dataset.pause === 'resume';
+      // Le premier clic ouvre une pause d'une heure : le geste courant est
+      // « arrête-toi, je bricole », pas « choisis une durée ». Les durées sont
+      // ensuite là pour la corriger, ce qui laisse le choix sans l'imposer.
+      await post('/api/pause', resume ? { on: false } : { minutes: Number(b.dataset.mins) });
+      refreshLive();
+      refreshStatus();
+    });
+}
+
 // ── Voilure ─────────────────────────────────────────────────────────────────
 let sailState = { main: '', head: '' };
 function buildSail() {
@@ -334,6 +395,7 @@ function query(over) {
       min: '1',
       smooth: ui.smooth === 'on' ? '1' : '0',
       history: ui.history === 'on' ? '1' : '0',
+      testRig: ui.testRig === 'on' ? '1' : '0',
     },
     over || {}
   );
@@ -1182,7 +1244,20 @@ function renderSailHistory() {
 
       const open = sailHist.editing === seg.from;
       const cls = seg.handled === 'corrected' ? ' fixed' : seg.handled === 'reviewed' ? ' okd' : '';
-      return `<div class="seg-row${open ? ' open' : ''}${cls}">
+      // Exclure est ORTHOGONAL à corriger et à confirmer : une période peut
+      // très bien avoir été réétiquetée puis jugée inexploitable quand même
+      // (un ris pris en quinze minutes porte la bonne étiquette et ne vaut
+      // rien). Le bouton reste donc offert dans les deux cas, à côté des
+      // autres et non à leur place.
+      const nIn = seg.pts || 0;
+      const allExcl = nIn > 0 && seg.excluded >= nIn;
+      // Pas de bouton sur une période sans un seul point à écarter : il ne
+      // pourrait rien faire, et un bouton qui ne fait rien se clique deux fois.
+      const exclBtn = !nIn ? '' : `<button class="act${allExcl ? ' danger' : ''}" data-excl="${seg.from}" data-exclto="${seg.to}"
+             data-exclon="${allExcl ? '0' : '1'}"
+             title="${allExcl ? 'Put these points back into the polar' : 'Keep these points but leave them out of the polar'}"
+             >${allExcl ? 'restore' : 'exclude'}</button>`;
+      return `<div class="seg-row${open ? ' open' : ''}${cls}${allExcl ? ' excl' : ''}">
         <div class="seg-head">
           <span class="t">${fmtTime(seg.from, true)} → ${fmtTime(seg.to)}</span>
           <span class="k">${seg.n} pts</span>
@@ -1193,7 +1268,7 @@ function renderSailHistory() {
                  <button class="act danger" data-undo="${seg.handled}" data-idx="${seg.handledIndex}">undo</button>`
               : `<button class="act" data-seg="${seg.from}">${open ? 'cancel' : 'set…'}</button>
                  <button class="act" data-ok="${seg.from}" data-to="${seg.to}" title="This stretch is already labelled correctly">ok</button>`
-          }</span>
+          }${exclBtn}</span>
         </div>
         ${(() => {
           // Une période partiellement traitée doit dire ce qui lui manque.
@@ -1203,7 +1278,11 @@ function renderSailHistory() {
           // avoir réglée revient dans la liste.
           const partial =
             !seg.handled && seg.handledPts > 0 && seg.pts ? `${seg.handledPts} of ${seg.pts} points already confirmed` : '';
-          const bits = [why, partial, sails.length > 1 ? sails.slice(1).map((x) => `${x.n} × ${sailLabel(x)}`).join(', ') : ''].filter(Boolean);
+          // Une exclusion PARTIELLE doit se dire, sinon le bouton propose
+          // « exclude » sur une période à moitié déjà écartée sans que rien
+          // ne l'indique, et le compte de la polaire semble faux.
+          const partialExcl = seg.excluded > 0 && !allExcl ? `${seg.excluded} of ${nIn} points excluded` : '';
+          const bits = [why, partial, partialExcl, sails.length > 1 ? sails.slice(1).map((x) => `${x.n} × ${sailLabel(x)}`).join(', ') : ''].filter(Boolean);
           return bits.length ? `<div class="why">${bits.join(' · ')}</div>` : '';
         })()}
         ${open ? sailEditor() : ''}
@@ -1257,6 +1336,20 @@ function renderSailHistory() {
       sailHist.editing = sailHist.editing === from ? null : from;
       sailHist.draft = { main: '', head: '' };
       renderSailHistory();
+    });
+  // « exclude » : les points restent sur le disque, ils sortent seulement de
+  // la polaire. C'est réversible d'un clic, et ça doit se voir tout de suite
+  // partout — la polaire ET le bandeau de qualité comptent ces points-là.
+  for (const b of el.querySelectorAll('button[data-excl]'))
+    b.addEventListener('click', async () => {
+      await post('/api/exclude-range', {
+        from: Number(b.dataset.excl),
+        to: Number(b.dataset.exclto),
+        excluded: b.dataset.exclon === '1',
+      });
+      await refreshSailHistory();
+      refreshStatus();
+      refreshPolar();
     });
   // « ok » : rien à corriger ici. Ce n'est pas une correction, donc ça ne
   // touche à aucune mesure — seulement à ce que la liste continue de demander.
@@ -2252,6 +2345,10 @@ async function refreshStatus() {
   // « draft points » sur un bateau qui n'en a aucun ne fait que du bruit.
   const dg = $('#draftGroup');
   if (dg) dg.hidden = !draft;
+  // Même règle pour les essais : le groupe n'apparaît qu'une fois qu'une
+  // voilure incomplète a vraiment été navigée.
+  const tg = $('#testRigGroup');
+  if (tg) tg.hidden = !(s.sailTags || []).some(isTestRig);
   $('#headSub').textContent =
     (s.first ? `${s.disk.runCount} points since ${new Date(s.first).toLocaleDateString()}` : 'no points yet') +
     ` · v${s.version || '?'}`;
@@ -2313,7 +2410,13 @@ function renderSailChips(tags, total) {
     '<span class="chiplabel">Sail plan</span>' +
     `<button class="chip" data-i="-1" aria-pressed="${!active}">All<span class="n">${all}</span></button>` +
     tags
-      .map((t, i) => `<button class="chip" data-i="${i}" aria-pressed="${same(t)}">${sailLabel(t)}<span class="n">${t.n}</span></button>`)
+      .map(
+        (t, i) =>
+          // Une configuration d'essai se signale dans la liste : sans ça, on
+          // clique dessus, le compte affiché ne correspond à rien de ce qu'on
+          // voit ailleurs, et on cherche l'erreur pendant dix minutes.
+          `<button class="chip${isTestRig(t) ? ' test' : ''}" data-i="${i}" aria-pressed="${same(t)}">${sailLabel(t)}<span class="n">${t.n}</span></button>`
+      )
       .join('');
   for (const b of el.querySelectorAll('.chip'))
     b.addEventListener('click', () => {

@@ -138,6 +138,21 @@ module.exports = function (app) {
   // obliger à la reposer. Elle expire de toute façon.
   let declaredUntil = 0;
   let declareFile = null;
+  // ── Pause ────────────────────────────────────────────────────────────────
+  // En pause, RIEN ne s'enregistre : ni les points, ni le journal brut. La
+  // tentation était de ne couper que les points, mais le brut aurait continué
+  // de grandir et le premier rejeu aurait ressuscité exactement ce qu'on
+  // voulait laisser dehors — une pause qui ne tient pas au rejeu n'est pas
+  // une pause, c'est un filtre d'affichage.
+  //
+  // `null` = en marche. Sinon `{ until, why }`, où `until: null` veut dire
+  // « jusqu'à ce que je reprenne » : c'est le cas des essais de gréement qui
+  // durent un week-end, et il faut pouvoir le dire. Une pause bornée s'efface
+  // toute seule au premier tick qui la dépasse — rien à cliquer au retour,
+  // seul moyen qu'une pause d'une heure ne devienne pas une pause de saison.
+  // Persistée, comme la déclaration : redémarrer SignalK n'est pas reprendre.
+  let pause = null;
+  let pauseFile = null;
   let startedAt = null;
   let rpmEverSeen = false;
   let buffer = [];
@@ -669,7 +684,40 @@ module.exports = function (app) {
     }
   }
 
+  // L'état de pause, lu et non stocké : une pause bornée se périme, et le
+  // seul endroit honnête pour le constater est la lecture. Renvoie `null` en
+  // marche, sinon la pause en cours — et l'efface du disque en la périmant,
+  // pour qu'un redémarrage ne la ressuscite pas.
+  function pauseState() {
+    if (!pause) return null;
+    if (pause.until && Date.now() >= pause.until) {
+      pause = null;
+      savePause();
+      return null;
+    }
+    return pause;
+  }
+
+  function savePause() {
+    if (!pauseFile) return;
+    try {
+      fs.writeFileSync(pauseFile, JSON.stringify(pause));
+    } catch (e) {
+      app.error(`[polar] pause: ${e.message}`);
+    }
+  }
+
   function tick() {
+    // La pause passe avant tout, y compris avant le journal brut : voir la
+    // déclaration de `pause`. La fenêtre en cours est jetée — elle décrivait
+    // un bateau qu'on a cessé de regarder, et la recoller au retour
+    // fabriquerait un point à cheval sur le trou.
+    if (pauseState()) {
+      live = { reason: 'paused', ts: Date.now() };
+      buffer = [];
+      updateStatus();
+      return;
+    }
     // Le consentement se donne une fois, dans la configuration, et il est
     // indissociable de ce qui rend une polaire partageable : le modèle du
     // bateau et un nom. Sans eux le plugin ne collecte rien plutôt que
@@ -870,6 +918,7 @@ module.exports = function (app) {
     speed_erratic: 'boat speed too irregular (surfing)',
     starting: 'starting up',
     needs_setup: 'set the boat model and name in the plugin config',
+    paused: 'paused — nothing is being recorded',
   };
 
   function updateStatus() {
@@ -997,6 +1046,19 @@ module.exports = function (app) {
       // Le partage force l'inclusion : ce qu'on reverse doit être exactement
       // ce que la carte Share affiche, quel que soit le réglage d'affichage.
       excludeHistory: q.shared === '1' ? false : q.history === '0',
+      // Les voilures d'essai (une voile explicitement absente) sortent par
+      // défaut : voir isTestRig() dans lib/polar.js. Le partage les écarte
+      // toujours, sans rien demander — le pot commun reçoit la polaire du
+      // bateau, pas celle de son week-end d'essais.
+      //
+      // Deux façons de les rallumer, et la seconde n'est pas un réglage :
+      // demander explicitement cette voilure-là dans le filtre, c'est demander
+      // à la voir. Sans cette dérogation, sélectionner « no main + genoa »
+      // dans le filtre ne renverrait jamais rien, ce qui passerait pour un bug
+      // et serait insupportable.
+      excludeTestRig:
+        q.shared === '1' ||
+        (q.testRig !== '1' && !polarLib.isTestRig({ main: q.main || '', head: q.head || '' })),
       sail: q.main || q.head ? { main: q.main || '', head: q.head || '' } : null,
       sailRanges: store.overrides().sailRanges,
       smooth: q.smooth !== '0',
@@ -1588,7 +1650,13 @@ module.exports = function (app) {
       res.json(out);
     });
 
-    router.get('/api/live', (req, res) => res.json(Object.assign({ reasonLabel: REASONS[live.reason] || live.reason }, live)));
+    // La pause voyage avec l'état en direct, et pas seulement avec /api/status :
+    // la webapp relit le direct toutes les 2 s et le statut toutes les 15 s.
+    // Mettre en pause et voir la page continuer d'afficher « steady state »
+    // pendant un quart de minute, c'est ne pas savoir si le clic a porté.
+    router.get('/api/live', (req, res) =>
+      res.json(Object.assign({ reasonLabel: REASONS[live.reason] || live.reason, pause: pauseState() }, live))
+    );
 
     router.get('/api/status', (req, res) => {
       const runs = store.runs();
@@ -1602,6 +1670,9 @@ module.exports = function (app) {
         historyApi: Boolean(app.getHistoryApi),
         excluded: store.excluded().size,
         overrides: Object.keys(store.overrides().cells).length,
+        // Lu, pas stocké : une pause bornée se périme, et le statut doit dire
+        // « en marche » dès la seconde où elle expire, sans attendre un tick.
+        pause: pauseState(),
         quality: qualitySummary(),
         first: runs.length ? runs[0].ts : null,
         last: runs.length ? runs[runs.length - 1].ts : null,
@@ -1656,6 +1727,11 @@ module.exports = function (app) {
       const runs = store.runs();
       const key = JSON.stringify([
         o.speed, o.wind, o.angle, o.tack, o.stat, o.twsBins, o.twaStep, o.minSamples, o.smooth, o.sail, o.excludeDeclared,
+        // Tout drapeau qui CHANGE la polaire doit être dans la clé, sans
+        // exception : `excludeHistory` n'y était pas, et basculer l'ébauche
+        // sans rien toucher d'autre renvoyait la polaire précédente — un
+        // réglage qui ne fait rien, ce qui est pire qu'un réglage absent.
+        o.excludeHistory, o.excludeTestRig,
         runs.length, runs.length ? runs[runs.length - 1].id : 0, store.overrides(), [...store.excluded()].length,
       ]);
       if (polarCache.key !== key) polarCache = { key, value: polarLib.buildPolar(runs, o) };
@@ -1844,8 +1920,14 @@ module.exports = function (app) {
       );
       for (const seg of out.segments) seg.ageDays = (Date.now() - seg.to) / 86400000;
       out.hideHandledAfterDays = opts.sailHistoryDays;
+      const excl = store.excluded();
       for (const seg of out.segments) {
         const inSeg = runs.filter((r) => r.ts >= seg.from && r.ts <= seg.to);
+        // Combien de points de la période sont déjà écartés. En compte et non
+        // en booléen : une période à moitié exclue existe (on a pu écarter une
+        // case depuis l'inspection de la polaire), et l'afficher comme
+        // entièrement exclue ferait croire que « restore » va tout rendre.
+        seg.excluded = inSeg.reduce((a, r) => a + (excl.has(r.id) ? 1 : 0), 0);
         const tally = new Map();
         for (const r of inSeg) {
           const t = polarLib.effectiveSail(r, store.overrides().sailRanges);
@@ -1897,6 +1979,27 @@ module.exports = function (app) {
       res.json({ ok: true, excluded: store.excluded().size });
     });
 
+    // Exclure une PLAGE, et non des identifiants un par un. C'est ce que
+    // « Sail plan over time » a sous la main : une période découpée sur un
+    // décrochage de performance, dont on sait en la regardant qu'elle ne vaut
+    // rien — un bout de remorquage, un ris qu'on a mis quinze minutes à
+    // prendre, une avarie. Pointer chaque case de la polaire pour retrouver
+    // ces points-là, un par un, ne se fait pas.
+    //
+    // On renvoie le compte de points touchés : « exclude » sans retour
+    // ressemble exactement à « exclude » qui n'a rien trouvé, et les
+    // frontières de segment sont calculées, donc jamais tout à fait celles
+    // qu'on croit.
+    router.post('/api/exclude-range', (req, res) => {
+      const b = body(req);
+      const from = Number(b.from);
+      const to = Number(b.to);
+      if (!isFinite(from) || !isFinite(to)) return res.json({ ok: false, error: 'from and to are required' });
+      const ids = store.runs().filter((r) => r.ts >= from && r.ts <= to).map((r) => r.id);
+      store.setExcluded(ids, b.excluded !== false);
+      res.json({ ok: true, n: ids.length, excluded: store.excluded().size });
+    });
+
     router.post('/api/cell-override', (req, res) => {
       const { ws, twa, value } = body(req);
       store.setCellOverride(`${ws}|${twa}`, value === null || value === '' ? null : Number(value));
@@ -1916,6 +2019,24 @@ module.exports = function (app) {
       }
       buffer = []; // la fenêtre en cours décrivait un autre régime
       res.json({ ok: true, declaredUntil });
+    });
+
+    // ── Pause ──────────────────────────────────────────────────────────────
+    // `minutes: 0` ou absent = jusqu'à reprise ; un nombre = pause bornée.
+    // `on: false` reprend. Reprendre vide la fenêtre pour la même raison que
+    // la mettre en pause : les secondes d'avant et d'après ne décrivent pas
+    // la même navigation.
+    router.post('/api/pause', (req, res) => {
+      const b = body(req);
+      if (b.on === false) {
+        pause = null;
+      } else {
+        const mins = Number(b.minutes) || 0;
+        pause = { since: Date.now(), until: mins > 0 ? Date.now() + mins * 60000 : null };
+      }
+      savePause();
+      buffer = [];
+      res.json({ ok: true, pause: pauseState() });
     });
 
     router.post('/api/sail', (req, res) => {
@@ -2419,6 +2540,17 @@ module.exports = function (app) {
         /* pas de déclaration valide, on repart de zéro */
       }
     }
+    pauseFile = path.join(dir, 'pause.json');
+    if (fs.existsSync(pauseFile)) {
+      try {
+        const p = JSON.parse(fs.readFileSync(pauseFile, 'utf8'));
+        // Une pause bornée déjà expirée pendant l'arrêt ne se rallume pas.
+        pause = p && (!p.until || Date.now() < p.until) ? p : null;
+      } catch (e) {
+        app.error(`[polar] pause: ${e.message}`);
+      }
+    }
+
     sailFile = path.join(dir, 'sail.json');
     if (fs.existsSync(sailFile)) {
       try {
@@ -2434,7 +2566,13 @@ module.exports = function (app) {
     // panne, pas un détail de debug, et personne n'active les logs verbeux
     // avant de partir.
     notifier = createNotifier(opts, (m) => app.error(`[polar] ${m}`));
-    sharer = createShare(path.join(dir, 'share.json'), (m) => app.error(`[polar] ${m}`));
+    // En debug, comme le ping et la vérification de version juste en dessous :
+    // au large, un reversement qui échoue n'est la panne de personne — il
+    // repart dix minutes plus tard. En `error`, un bateau hors de portée
+    // remplissait le journal du serveur d'alertes rouges décrivant un
+    // fonctionnement parfaitement normal, ce qui est le meilleur moyen de
+    // faire ignorer les vraies.
+    sharer = createShare(path.join(dir, 'share.json'), (m) => app.debug(`[polar] ${m}`));
     // Le jalon n'est pas un nombre de points ni un nombre d'ouvertures de la
     // webapp, mais le moment où la polaire devient exploitable : 15 cases
     // étayées par au moins trois mesures. Avant ça, il n'y a rien à remercier.

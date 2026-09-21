@@ -72,7 +72,10 @@ carries:
 What does *not* go: the direction of the implied current, and the common bias
 of the leeway (current plus compass error). Both describe **where** the boat
 sails. Only what belongs to the boat leaves the boat. Points recorded on a "sailing" declaration are left out: nobody else
-can check a declaration. The web app shows the whole payload at any time
+can check a declaration. Points sailed on a deliberately incomplete rig — no
+mainsail, no headsail — are left out too, always, with no display setting able
+to put them back: the pool gets the polar of your boat, not the polar of your
+test weekend ([test rigs](test-rigs.md)). The web app shows the whole payload at any time
 (**See exactly what is sent**), which is the point: a contribution you cannot
 read is one you end up switching off.
 

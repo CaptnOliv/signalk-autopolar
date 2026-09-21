@@ -508,3 +508,15 @@ footer { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--hairli
 }
 #habits .facts span { color: var(--ink-2); }
 #habits .facts b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* Une voilure d'essai dans le filtre : reconnaissable sans être criarde. Elle
+   n'est pas une erreur — c'est une mesure qu'on a volontairement mise de côté,
+   et le pointillé dit exactement ça, « en marge » plutôt que « en faute ». */
+.chip.test { border-style: dashed; }
+.chip.test .n { opacity: 0.7; }
+
+/* Une période écartée de la polaire. Elle reste lisible — les points existent
+   toujours et le geste s'annule — mais elle doit se distinguer au premier coup
+   d'œil des périodes qui comptent encore. */
+.seg-row.excl { opacity: 0.55; }
+.seg-row.excl .cur { text-decoration: line-through; }

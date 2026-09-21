@@ -68,3 +68,28 @@ them.
 Below the threshold the stretch stays on the list **and says what is missing**
 ("20 of 32 points already confirmed"). Hiding half a stretch nobody ever
 labelled would be worse than asking again.
+
+## Leaving a stretch out of the polar
+
+Correcting a label is not always the answer. Some stretches carry the right
+sail plan and are still worth nothing: the fifteen minutes it took to get the
+reef in, a tow, a passage with a fouled prop, an afternoon of sail trim tests.
+`ok` and `set…` both say *this label is right*; neither says *these
+measurements should not count*.
+
+So each stretch also has **exclude**. The points stay on the disk — nothing is
+deleted, and `restore` puts them straight back — they simply stop being counted
+in the polar, in the quality score and in what gets shared. The row dims and
+the sail plan is struck through, because the one real way to get this wrong is
+to forget you did it.
+
+It is deliberately orthogonal to *corrected* and *confirmed*: a stretch can be
+relabelled **and** excluded, which is exactly the case of a reef that took a
+quarter of an hour. A partly excluded stretch says so ("6 of 32 points
+excluded") rather than offering a `restore` that would put back more than you
+ever took out.
+
+The same points can also be excluded one by one from the polar diagram, by
+unticking them in cell inspection. That works when you have already found the
+offending cell; it does not, when what you know is *"Tuesday afternoon was
+rubbish"*.
