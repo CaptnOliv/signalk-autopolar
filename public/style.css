@@ -56,6 +56,16 @@ h2 .sub { color: var(--muted); font-weight: 400; }
 header {
   padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--hairline);
 }
+/* `hidden` est un contrat dur : « cet élément n'existe pas à l'écran ». Mais le
+   `[hidden] { display: none }` du navigateur est une règle d'agent utilisateur,
+   que N'IMPORTE quel `display:` d'une feuille de style d'auteur l'emporte — donc
+   tout ce qui porte `.group`, `.row-actions`, `.supportbar`, `.alertbar` reste
+   affiché, et VIDE, alors que le code JS croit l'avoir caché. Le piège ne se
+   voit pas en relecture : le HTML dit `hidden`, le JS dit `.hidden = true`, et
+   pourtant des cadres vides traînent en haut de la page. Une seule ligne ici
+   plutôt qu'une exception par classe, qu'on oubliera à la classe suivante. */
+[hidden] { display: none !important; }
+
 header .titlerow { display: flex; align-items: baseline; gap: 12px; }
 header .sub { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
 /* Les deux gestes qui ne dépendent d'aucune donnée affichée : « refresh » et
@@ -423,10 +433,6 @@ code { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color
   border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
   font-size: 13px; color: var(--ink-2);
 }
-/* `display: flex` sur la classe l'emporte sur le `[hidden] { display: none }`
-   du navigateur : sans cette ligne, le bandeau reste visible et VIDE tant que
-   rien ne doit être demandé. */
-.supportbar[hidden] { display: none; }
 .supportbar b { color: var(--ink); font-weight: 600; }
 .supportbar .txt { flex: 1 1 320px; line-height: 1.55; }
 .supportbar .why { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
