@@ -9,7 +9,7 @@
 // mesure).
 
 const assert = require('assert');
-const { summarise, bandOf, isNight, POINTS_OF_SAIL, WIND_BANDS, KN } = require('../lib/habits');
+const { summarise, bandOf, isNight, POINTS_OF_SAIL, WIND_BANDS } = require('../lib/habits');
 
 // ── Les bornes ─────────────────────────────────────────────────────────────
 assert.strictEqual(bandOf(POINTS_OF_SAIL, 0).key, 'close_hauled');
@@ -29,8 +29,14 @@ assert.strictEqual(summarise([{ ts: 1, twa: null, tws: 5 }]).points, 0);
 // ── Un bateau qui ne fait que du portant ───────────────────────────────────
 // Le cas qui motive tout le module : la polaire de près est vide, et ce n'est
 // pas la collecte qui est en cause.
+// UN RUN EST EN UNITÉS MARINES. C'est la convention de `runs.jsonl`, et le
+// piège de ce module : il a longtemps reconverti m/s → nœuds des valeurs qui
+// étaient déjà des nœuds, et ce test fabriquait ses runs en m/s, donc il
+// confirmait le bug au lieu de l'attraper. Les vitesses ci-dessous sont donc
+// écrites en nœuds tels qu'ils sortent de la collecte, et relues telles quelles
+// dans les assertions : si les deux côtés se remettent à diverger, ça se voit.
 const run = (twa, twsKn, over) =>
-  Object.assign({ ts: Date.UTC(2026, 8, 2, 12, 0, 0), n: 60, twa, tws: twsKn / KN, sog: 6 / KN }, over);
+  Object.assign({ ts: Date.UTC(2026, 8, 2, 12, 0, 0), n: 60, twa, tws: twsKn, sog: 6 }, over);
 const downwind = [];
 for (let i = 0; i < 80; i++) downwind.push(run(i % 2 ? 150 : -120, 20));
 for (let i = 0; i < 20; i++) downwind.push(run(45, 12));
@@ -55,10 +61,16 @@ const heeled = summarise([run(45, 12, { roll: -12 }), run(45, 12, { roll: 4 }), 
 assert.strictEqual(heeled.heel.median, 8, 'la gîte est prise en valeur absolue, les deux bords confondus');
 
 // ── Vitesses ───────────────────────────────────────────────────────────────
-const speeds = summarise([run(90, 12, { sog: 4 / KN }), run(90, 12, { sog: 7 / KN }), run(90, 12, { sog: 11 / KN })]);
+const speeds = summarise([run(90, 12, { sog: 4 }), run(90, 12, { sog: 7 }), run(90, 12, { sog: 11 })]);
 assert.strictEqual(speeds.speed.median, 7);
 assert.strictEqual(speeds.speed.best, 11);
 assert.strictEqual(speeds.windSeen.median, 12);
+assert.strictEqual(speeds.windSeen.strongest, 12);
+// Le garde-fou de non-régression : 12 nœuds de vent doivent tomber dans
+// « fresh » (12-18), jamais dans « heavy » — ce que donnait la conversion en
+// trop. Même chose pour la vitesse, lue à l'identique.
+assert.strictEqual(speeds.wind.find((b) => b.key === 'fresh').points, 3, 'aucune conversion ne doit être appliquée à un run');
+assert.strictEqual(speeds.wind.find((b) => b.key === 'heavy').points, 0);
 
 // ── La nuit, à l'heure du bord ─────────────────────────────────────────────
 const night = new Date(2026, 8, 2, 23, 30, 0).getTime();

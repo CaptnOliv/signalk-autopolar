@@ -30,6 +30,15 @@ the plugin applies it and the points count normally; without it, they are
 dropped from the leeway analysis rather than silently corrected. See
 [Leeway](leeway.md).
 
+`maxUpwindSpeedRatio` (1 by default) is the one physical sanity check in the
+admission filter: below 70° of true wind angle, a point whose boat speed
+exceeds this multiple of the true wind speed is refused, whatever the engine
+data says. It exists because engine data can be present, fresh and yet
+constant — see [Never under engine, never at anchor](engine-detection.md). Set
+it to 0 to switch the rule off; foiling boats really do outrun the wind
+upwind. The raw log is never filtered by it, so a replay can always revisit
+the decision.
+
 `publishPerformance` is left off until the polar has proved itself, and should
 stay off if another polar plugin is installed: they would all write to the same
 `performance.*` paths.

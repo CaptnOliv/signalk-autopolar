@@ -6,6 +6,7 @@ const OPTS = {
   minSogKn: 1,
   minAwsKn: 1.5,
   minTwaDeg: 25,
+  maxUpwindSpeedRatio: 1,
   windowS: 9,
   awaDriftMaxDeg: 15,
   awaSpreadMaxDeg: 45,
@@ -88,6 +89,28 @@ assert.strictEqual(
   classify(s({ rpm: null, engineState: null, fresh: { rpm: false, engineState: false } }), Object.assign({}, OPTS, { autostateFallback: false })).reason,
   'engine_unknown'
 );
+
+// ── Plus vite que le vent, au près ─────────────────────────────────────────
+// Le contrôle physique : il attrape le moteur quand le signal moteur ment.
+// Les deux polaires du fonds commun qui l'ont motivé annonçaient 1,26× et
+// 1,29× le vent vrai au près, avec un verdict moteur du rang le plus solide.
+assert.strictEqual(classify(s({ twa: 50, tws: 4, sog: 5 }), OPTS).reason, 'faster_than_wind');
+assert.strictEqual(classify(s({ twa: -50, tws: 4, sog: 5 }), OPTS).reason, 'faster_than_wind', 'une amure ou l\'autre');
+// À la stricte égalité on passe : le seuil est une borne physique, pas une marge.
+assert.strictEqual(classify(s({ twa: 50, tws: 5, sog: 5 }), OPTS).usable, true);
+// Au-delà de 70° la règle ne s'applique plus : un surf au portant dépasse
+// vraiment le vent vrai, et ce n'est pas le moteur.
+assert.strictEqual(classify(s({ twa: 140, tws: 4, sog: 8 }), OPTS).usable, true);
+assert.strictEqual(classify(s({ twa: 70, tws: 4, sog: 8 }), OPTS).reason, 'faster_than_wind', '70° est encore du près');
+// Réglable, parce qu'un foiler dépasse vraiment le vent au près.
+assert.strictEqual(classify(s({ twa: 50, tws: 4, sog: 5 }), Object.assign({}, OPTS, { maxUpwindSpeedRatio: 0 })).usable, true);
+assert.strictEqual(classify(s({ twa: 50, tws: 4, sog: 5 }), Object.assign({}, OPTS, { maxUpwindSpeedRatio: 2 })).usable, true);
+// Sans vent vrai exploitable, on ne conclut pas — c'est `in_irons` ou le
+// manque de données qui tranche, jamais cette règle-ci.
+assert.strictEqual(classify(s({ twa: 50, tws: 0, sog: 5 }), OPTS).usable, true);
+// L'ordre compte : au mouillage dans du courant, 1,2 nd par 0,5 nd de vent
+// doit se lire « trop lent », pas « plus vite que le vent ».
+assert.strictEqual(classify(s({ twa: 50, tws: 0.5, sog: 0.8 }), OPTS).reason, 'too_slow');
 
 assert.strictEqual(classify(s({ navState: 'anchored', sog: 0.4 }), OPTS).reason, 'anchored');
 // ... mais un navigation.state en retard ne bloque pas un bateau qui avance.

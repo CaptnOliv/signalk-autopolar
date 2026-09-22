@@ -1,13 +1,13 @@
 {
   "name": "@captnoliv/signalk-autopolar",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "publishConfig": {
     "access": "public"
   },
   "description": "Learns your boat's polar by watching how she is actually sailed — never under engine, never at anchor. Web app, SOG/STW and true/apparent comparison, speed-sensor diagnostic, .pol / Jieter / CSV export, direct hand-off to signalk-polar-management.",
   "main": "index.js",
   "scripts": {
-    "test": "node test/geom.test.js && node test/gate.test.js && node test/polar.test.js && node test/now.test.js && node test/speedo.test.js && node test/leeway.test.js && node test/sailchange.test.js && node test/notify.test.js && node test/share.test.js && node test/usage.test.js && node test/update.test.js && node test/defaults.test.js && node test/habits.test.js && node test/support.test.js && node test/history.test.js && node test/timefmt.test.js && node test/smoke.js"
+    "test": "node test/geom.test.js && node test/gate.test.js && node test/polar.test.js && node test/now.test.js && node test/speedo.test.js && node test/leeway.test.js && node test/sailchange.test.js && node test/notify.test.js && node test/share.test.js && node test/usage.test.js && node test/update.test.js && node test/defaults.test.js && node test/habits.test.js && node test/engine-witness.test.js && node test/suspect.test.js && node test/support.test.js && node test/history.test.js && node test/timefmt.test.js && node test/smoke.js"
   },
   "keywords": [
     "signalk-node-server-plugin",

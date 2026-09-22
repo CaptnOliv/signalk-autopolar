@@ -58,7 +58,10 @@ header {
 }
 header .titlerow { display: flex; align-items: baseline; gap: 12px; }
 header .sub { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
-header #btnReload { margin-left: auto; flex: none; }
+/* Les deux gestes qui ne dépendent d'aucune donnée affichée : « refresh » et
+   la pause. Groupés à droite du titre, ils ne se déplacent pas quand le
+   sous-titre change de longueur. */
+header .headacts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
 /* Une version plus récente existe. Une ligne, au même rang que le sous-titre :
    c'est une information, pas un incident — d'où la rampe de vent plutôt que la couleur
    d'alerte, qui est réservée à ce qui est cassé. */
@@ -525,3 +528,44 @@ footer { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--hairli
    ce n'est pas une commande, c'est le repère qui manque quand deux appareils du
    bord ne sont pas réglés sur la même zone. */
 .row-actions .k.tz { margin-left: auto; cursor: help; }
+
+
+/* ── Bandeaux pleine largeur ────────────────────────────────────────────────
+   Ce qui doit être lu AVANT la page : une pause en cours, des points dont on
+   vient d'établir qu'ils ne devraient pas être là. Même gabarit que
+   `.supportbar` mais bordé de la couleur d'alerte — ce n'est pas une demande,
+   c'est un état qu'on a le droit de ne pas vouloir. */
+.alertbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-left: 3px solid var(--warning);
+  border-radius: 10px; padding: 12px 14px; margin-bottom: 14px;
+  font-size: 13px; color: var(--ink-2);
+}
+.alertbar .msg { flex: 1 1 320px; }
+.alertbar .acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-left: auto; }
+.alertbar .k { color: var(--muted); font-size: 11px; }
+
+/* ── Blocs repliés ──────────────────────────────────────────────────────────
+   Un `<details>` sert ici à une seule chose : rendre à la page la place que
+   prenaient des réglages qu'on touche une fois. Le résumé porte donc toujours
+   l'état de ce qu'il cache — sans ça, replier revient à masquer, et un réglage
+   masqué finit par faire lire une polaire pour une autre. */
+details.fold { margin-top: 10px; border-top: 1px solid var(--hairline); padding-top: 8px; }
+details.fold > summary {
+  cursor: pointer; list-style: none; font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em; user-select: none;
+}
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::before { content: '▸ '; display: inline-block; width: 1em; }
+details.fold[open] > summary::before { content: '▾ '; }
+details.fold > summary:hover { color: var(--ink-2); }
+details.fold > summary .k { text-transform: none; letter-spacing: 0; color: var(--ink-2); }
+/* Un réglage hors de son défaut se voit sans ouvrir : c'est la contrepartie
+   exacte du pliage. */
+details.fold > summary .k.on { color: var(--w4); }
+details.fold > summary .k.warn { color: var(--warning); }
+details.fold > .controls, details.fold > .row-actions, details.fold > .metrics { margin-top: 10px; }
+/* Le bloc replié est un enfant de `.controls`, qui est un flex : sans ça il se
+   rangerait à côté des trois groupes restés dehors au lieu de passer dessous. */
+.controls > details.fold { flex: 1 0 100%; }

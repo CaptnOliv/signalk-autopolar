@@ -180,10 +180,37 @@ run(300, () => ({
 const afterMotor = fs.readFileSync(path.join(dataDir, 'runs.jsonl'), 'utf8').trim().split('\n').length;
 assert.strictEqual(afterMotor, afterPort, 'un bord au moteur ne doit produire aucun point');
 
-// Le brut ne contient pas non plus le moteur, mais contient bien le virement
-// (c'est justement ce qu'on veut pouvoir réexaminer plus tard).
+// 5. Le même bord au moteur, mais avec un signal moteur qui MENT : compte-tours
+// à zéro et `state` sur « stopped » alors que le bateau remonte au près à
+// 5,5 nd dans 4 nd de vent vrai. C'est le cas réel de deux polaires du fonds
+// commun — verdict moteur du rang le plus solide, et 1,26× le vent vrai au
+// près. Rien ne doit en sortir : c'est le garde-fou physique qui tranche,
+// puisque la donnée moteur, elle, est parfaitement crédible.
+run(300, () => ({
+  sog: 5.5 + noise(0.1),
+  stw: 5.4 + noise(0.1),
+  aws: 8,
+  awa: 25,
+  tws: 4,
+  twa: 50,
+  hdg: 50,
+  rot: 0,
+  roll: 2,
+  rpm: 0,
+  navState: 'sailing',
+}));
+const afterLiar = fs.readFileSync(path.join(dataDir, 'runs.jsonl'), 'utf8').trim().split('\n').length;
+assert.strictEqual(afterLiar, afterPort, 'plus vite que le vent au près : aucun point, quoi que dise le moteur');
+
+// Le brut ne contient pas le moteur, mais contient bien le virement ET le bord
+// précédent — c'est justement ce qu'on veut pouvoir réexaminer plus tard, y
+// compris pour juger le garde-fou lui-même, qui ne filtre donc pas le brut.
 const samples = fs.readFileSync(path.join(dataDir, 'samples.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-assert.ok(samples.length > 600 && samples.length < 640, `brut = les 620 s sous voile, obtenu ${samples.length}`);
+assert.ok(samples.length > 900 && samples.length < 940, `brut = les 920 s sous voile, obtenu ${samples.length}`);
+assert.ok(
+  samples.filter((x) => x.tws === 4).length > 250,
+  'le garde-fou physique ne doit rien retirer du journal brut'
+);
 // Le faux bord publie à la fois `revolutions` et `state`, comme la plupart des
 // installations : la décision s'appuie donc sur les deux, jamais sur autostate.
 assert.ok(!samples.some((s) => s.eng !== 'state+rpm'), 'les deux témoins moteur sont utilisés ici');
@@ -804,11 +831,35 @@ async function historyTests() {
   // `state+rpm` ; l'ébauche tirée de l'historique n'a aucun témoin moteur.
   assert.ok(shared.engineSources && typeof shared.engineSources === 'object', 'la polaire partagée dit sur quoi repose le verdict moteur');
   assert.ok(shared.engineSources['state+rpm'] > 0, `engineSources: ${JSON.stringify(shared.engineSources)}`);
+  // Le décompte porte sur les points VRAIMENT dans la polaire envoyée, pas sur
+  // tous les runs du disque. La nuance n'est pas comptable : comptée sur les
+  // runs, la somme annonçait au fonds commun des points `declared` — que le
+  // partage exclut par construction — et le site les affichait comme si la
+  // polaire reposait dessus.
   assert.strictEqual(
     Object.values(shared.engineSources).reduce((a, b) => a + b, 0),
-    shared.totalPoints,
-    'chaque point est attribué à exactement une source'
+    shared.points,
+    'chaque point retenu est attribué à exactement une source'
   );
+  assert.ok(!shared.engineSources.declared, "une parole d'équipage n'entre jamais dans la polaire partagée");
+  // Le témoin part avec la polaire : sans lui, le fonds commun ne peut pas
+  // distinguer « ce bateau n'était pas au moteur » de « ce capteur n'a jamais
+  // rien dit d'autre ». Le faux bord démarre bien son moteur, donc rien à
+  // signaler ici — et c'est exactement ce que le champ doit valoir.
+  assert.ok(shared.engineWitness, 'la polaire partagée dit ce que le capteur moteur a déjà été capable de dire');
+  assert.strictEqual(shared.engineWitness.verdict, null);
+  assert.strictEqual(shared.engineWitness.rpm.everRunning, true, 'le bord au moteur du scénario a bien été vu');
+  assert.strictEqual(shared.engineWitness.state.everRunning, true);
+  // ── Rattraper le coup ──
+  // Rien à rattraper ici : le garde-fou a fait son travail en amont, donc la
+  // route doit dire « zéro » et non « pas de route ». C'est la différence
+  // entre un bandeau qui ne s'affiche pas et un bandeau cassé.
+  const susp = call('GET /api/suspect');
+  assert.strictEqual(susp.points, 0);
+  assert.strictEqual(susp.ratio, 1, 'la route dit avec quelle règle elle a relu le journal');
+  assert.deepStrictEqual(susp.bands, []);
+  assert.strictEqual(call('POST /api/suspect/exclude', {}).n, 0);
+
   // Et le partage ignore le réglage d'affichage : ce qu'on reverse est ce que
   // la carte Share montre, pas ce qu'on regarde à l'écran.
   assert.strictEqual(JSON.parse(call('GET /api/share.json', { history: '0' })).historyPoints, imp.points);

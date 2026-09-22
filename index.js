@@ -32,6 +32,8 @@ const { createShare, stateOf: shareState } = require('./lib/share');
 const { createSupport } = require('./lib/support');
 const { createUsage, pingEndpointFrom } = require('./lib/usage');
 const { createUpdate } = require('./lib/update');
+const { createWitness } = require('./lib/engine-witness');
+const { findSuspect } = require('./lib/suspect');
 const habitsLib = require('./lib/habits');
 const history = require('./lib/history');
 
@@ -53,6 +55,12 @@ const RAW_OPTS = {
   minSogKn: 0.3,
   minAwsKn: 0.2,
   minTwaDeg: 5,
+  // Le contrôle « plus vite que le vent » est délibérément DÉSACTIVÉ pour le
+  // journal brut. C'est le même principe que les autres seuils ici : le brut
+  // garde tout, pour qu'un rejeu puisse revenir dessus — y compris pour juger
+  // cette règle-là. Sans ça, un bateau dont la girouette sous-lit verrait ses
+  // points disparaître définitivement au lieu d'être rejouables.
+  maxUpwindSpeedRatio: 0,
 };
 
 // Les valeurs par défaut de la configuration. Elles vivent ici, à portée de
@@ -87,6 +95,7 @@ const DEFAULTS = {
       minSogKn: 1,
       minAwsKn: 1.5,
       minTwaDeg: 25,
+      maxUpwindSpeedRatio: 1,
       allowDeclaredSailing: true,
       declaredSailingMinutes: 90,
       autostateFallback: true,
@@ -138,6 +147,10 @@ module.exports = function (app) {
   // obliger à la reposer. Elle expire de toute façon.
   let declaredUntil = 0;
   let declareFile = null;
+  // Le témoin moteur : sur toute la vie de l'installation, ce bateau a-t-il
+  // déjà vu son signal moteur dire « en marche » ? Voir lib/engine-witness.js.
+  let witness = null;
+  let lastEngineSeenAt = 0;
   // ── Pause ────────────────────────────────────────────────────────────────
   // En pause, RIEN ne s'enregistre : ni les points, ni le journal brut. La
   // tentation était de ne couper que les points, mais le brut aurait continué
@@ -387,6 +400,13 @@ module.exports = function (app) {
             description: 'Below this you are head to wind: nothing to learn, and the true wind computation is very noisy.',
             default: 25,
           },
+          maxUpwindSpeedRatio: {
+            type: 'number',
+            title: 'Reject points faster than this × the true wind, close-hauled',
+            description:
+              'A physical sanity check, applied below 70° of true wind angle: under sail, a keelboat does not outrun the true wind upwind. It catches engine hours on boats whose engine data is present but never changes — a gateway stuck on "stopped", or a rev count that was never wired and reads zero. Set to 0 to switch it off (foiling boats really do exceed it). The raw log is never filtered by it, so a replay can always revisit the decision.',
+            default: 1,
+          },
           autostateFallback: {
             type: 'boolean',
             title: 'Fall back on navigation.state when engine data is missing',
@@ -592,6 +612,16 @@ module.exports = function (app) {
     }
 
     const eng = readEngine();
+    // Le témoin observe la lecture BRUTE, avant tout verdict : ce qui
+    // l'intéresse n'est pas ce que le filtre décide, c'est ce que le capteur
+    // est capable de dire. Il est nourri ici et nulle part ailleurs, pour
+    // qu'il voie aussi les instants où le moteur tourne — ceux-là ne
+    // produisent ni point ni ligne de journal brut.
+    if (witness) {
+      const now = Date.now();
+      witness.observe(eng, lastEngineSeenAt ? (now - lastEngineSeenAt) / 1000 : 1, now);
+      lastEngineSeenAt = now;
+    }
     const navStateNode = read(opts.navStatePath);
 
     return {
@@ -884,6 +914,11 @@ module.exports = function (app) {
         canDeclare: opts.allowDeclaredSailing && !snap.fresh.rpm && !snap.fresh.engineState,
         declaredUntil: snap.declaredUntil,
         declaredMinutes: opts.declaredSailingMinutes,
+        // « Ce capteur a-t-il déjà dit que le moteur tournait ? » — la seule
+        // façon de distinguer un moteur à l'arrêt d'un capteur qui ne sait pas
+        // le dire, et elle demande des heures, pas de la finesse.
+        witness: witness ? witness.verdict() : null,
+        observedS: witness ? witness.state().observedS : 0,
       },
       counters,
       idle: {
@@ -908,6 +943,7 @@ module.exports = function (app) {
     no_wind_data: 'no wind instrument data',
     no_sog: 'no GPS fix',
     in_irons: 'head to wind',
+    faster_than_wind: 'faster than the true wind, close-hauled — engine?',
     tack_change: 'tack change',
     turning: 'turning (manoeuvre)',
     course_changed: 'point of sail is changing',
@@ -1463,11 +1499,12 @@ module.exports = function (app) {
     // (`declared`), ou un défaut d'autostate — et rien, dans la matrice, ne
     // permet de trancher. `declaredExcluded` disait déjà ce qu'on a jeté ;
     // ceci dit ce qu'on a gardé, et d'où vient le verdict.
-    const engineSources = {};
-    for (const r of runs) {
-      const k = r.engineSource || 'unknown';
-      engineSources[k] = (engineSources[k] || 0) + 1;
-    }
+    // Compté par buildPolar, sur les points qui sont VRAIMENT dans la polaire
+    // envoyée. Compté ici sur `runs`, ça annonçait au fonds commun des points
+    // `declared` dans une polaire qui les exclut par construction — et le site
+    // les affichait sous « how the engine was ruled out » pour des mesures qui
+    // n'y étaient pas.
+    const engineSources = polar.engineSources || {};
     // Les points d'ébauche partent avec le reste, et leur nombre part avec
     // eux. Le collecteur peut les pondérer ou les écarter ; ce qui compte est
     // qu'on ne les fasse pas passer pour des mesures prises en direct.
@@ -1505,6 +1542,11 @@ module.exports = function (app) {
       totalPoints: runs.length,
       declaredExcluded: declared,
       engineSources,
+      // Ce que le décompte ci-dessus ne peut pas dire : un verdict `state` ou
+      // `rpm` rendu 995 fois par un capteur qui n'a JAMAIS rien dit d'autre
+      // n'est pas un verdict, c'est une constante. Le fonds commun a reçu deux
+      // polaires exactement dans ce cas. Voir lib/engine-witness.js.
+      engineWitness: witness ? Object.assign({ verdict: witness.verdict() }, witness.state()) : null,
       historyPoints: fromHistory,
       cells,
       bands,
@@ -1971,6 +2013,31 @@ module.exports = function (app) {
     // Vider la file d'alertes en attente : au retour, une alerte de la veille
     // n'apprend plus rien.
     router.post('/api/ntfy-clear', (req, res) => res.json({ ok: true, cleared: notifier ? notifier.clear() : 0 }));
+
+    // ── Rattraper le coup ────────────────────────────────────────────────
+    //
+    // Les points déjà enregistrés que le garde-fou physique n'accepterait plus.
+    // Durcir un filtre sans regarder derrière soi laisse la pollution
+    // exactement où elle était : elle ne se verra plus que comme une case un
+    // peu rapide, dans un routage, dans six mois. La route DIT, elle ne fait
+    // rien — l'exclusion est un geste, et c'est `POST` qui la porte.
+    router.get('/api/suspect', (req, res) => {
+      const found = findSuspect(store.runs(), { ratio: opts.maxUpwindSpeedRatio, excluded: store.excluded() });
+      res.json(Object.assign({ ratio: opts.maxUpwindSpeedRatio }, found, { ids: undefined, hours: found.seconds / 3600 }));
+    });
+
+    // Exclure, pas effacer : la mesure a bien eu lieu, c'est son interprétation
+    // qui était fausse. L'exclusion vit dans overrides.json, donc elle est
+    // réversible (« Clear edits ») et un rejeu du brut la conserve.
+    router.post('/api/suspect/exclude', (req, res) => {
+      const found = findSuspect(store.runs(), { ratio: opts.maxUpwindSpeedRatio, excluded: store.excluded() });
+      store.setExcluded(found.ids, true);
+      // Et on renvoie la polaire corrigée sans attendre le palier des 500
+      // points : une polaire dont on vient d'établir qu'elle est polluée n'a
+      // rien à faire dans le fonds commun une nav de plus.
+      if (sharer && found.ids.length) sharer.force();
+      res.json({ ok: true, n: found.ids.length, excluded: store.excluded().size });
+    });
 
     router.post('/api/exclude', (req, res) => {
       const b = body(req);
@@ -2587,6 +2654,8 @@ module.exports = function (app) {
     usage = createUsage(path.join(dir, 'usage.json'), (m) => app.debug(`[polar] ${m}`));
     // Idem : au large la vérification échoue et ce n'est la panne de personne.
     updater = createUpdate(path.join(dir, 'update.json'), (m) => app.debug(`[polar] ${m}`));
+    witness = createWitness(path.join(dir, 'engine-witness.json'), (m) => app.error(`[polar] ${m}`));
+    lastEngineSeenAt = 0;
 
     timer = setInterval(safeTick, 1000);
     updateStatus();
@@ -2595,6 +2664,8 @@ module.exports = function (app) {
   plugin.stop = function () {
     if (timer) clearInterval(timer);
     timer = null;
+    if (witness) witness.flush();
+    witness = null;
     updater = null;
     buffer = [];
     store = null;

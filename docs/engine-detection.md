@@ -28,6 +28,48 @@ polar costs the polar.
 If you have several engines, any one of them running is enough to stop
 collection.
 
+## When the engine data is present, fresh — and says nothing
+
+Everything above believes the boat. That is the right default: `state` and
+`revolutions` answer the question directly. But they also answer it when they
+know nothing. A gateway that publishes `stopped` because its discrete-status
+field was never wired, or a `revolutions` path that reads zero because there is
+no tacho input behind it, is indistinguishable from an engine that really is
+off — in any single snapshot.
+
+It is not a theoretical worry. Two of the first polars shared to the common
+pool carried whole wind bands of engine while reporting the *strongest* kind of
+evidence: `state` on 995 of 1000 points for one, `revolutions` on all 3500 for
+the other. Both sailed upwind at more than 1.25× the true wind in light air,
+which no keelboat does under sail.
+
+So the plugin does two things about it, neither of which second-guesses your
+instruments:
+
+**It watches what your sensor is capable of saying.** Over the life of the
+install, has this signal *ever* reported the engine running? The counter is
+persisted, and it counts engine-data time rather than uptime. If ten hours of
+engine data have gone by without a single "running", the web app says so in the
+Engine tile — a reading that never changes is not a measurement. It is
+deliberately phrased as a doubt, because the innocent explanation ("I have not
+started the engine in three weeks") is a real one, and no measurement can tell
+the two apart. The answer travels with your shared polar, as `engineWitness`,
+so the pool can read a table the same way you do.
+
+**And it checks the physics, which needs no sensor at all.** Below 70° of true
+wind angle, a keelboat does not outrun the true wind. A point that does is
+refused, whatever the engine data says, with the reason `faster than the true
+wind, close-hauled`. The raw log keeps it, so a replay can always revisit the
+call, and `maxUpwindSpeedRatio: 0` switches the rule off for boats that really
+do exceed it — foilers. Getting it wrong costs one point; not having it costs
+the polar, and the common pool with it.
+
+Points already recorded before this existed are not left alone either: the web
+app shows what it finds in your own log and offers to **exclude** them — kept
+on disk, out of the polar, reversible, and a fresh copy is shared straight away
+so the pool gets the corrected table rather than waiting for the next 500
+points.
+
 ## Do I need the autostate plugin? No.
 
 `signalk-autostate` is a fine plugin, but it will not solve this problem,

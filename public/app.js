@@ -180,7 +180,12 @@ async function refreshLive() {
   };
   const engineTile = (e, fresh, ms) => {
     if (!e) return tile('Engine', '—', '', fresh, ms);
-    return tile('Engine', ENGINE_STATE[e.state] || e.state, '', e.state === 'unknown' ? false : fresh, ms, ENGINE_VIA[e.source] || '');
+    // Un capteur qui n'a JAMAIS dit « en marche » n'est pas une preuve que le
+    // moteur est à l'arrêt : c'est peut-être une passerelle bloquée sur
+    // `stopped`, ou un compte-tours jamais câblé. Deux polaires du fonds
+    // commun sont dans ce cas, avec le verdict le plus solide de l'échelle.
+    const via = [ENGINE_VIA[e.source] || '', e.witness ? '⚠ never seen running' : ''].filter(Boolean).join(' · ');
+    return tile('Engine', ENGINE_STATE[e.state] || e.state, '', e.state === 'unknown' ? false : fresh, ms, via);
   };
   $('#tiles').innerHTML = [
     tile('SOG', fmt(v.sog, 2), 'kn', f.sog, g.sog),
@@ -203,6 +208,19 @@ async function refreshLive() {
   // Ce que le filtre voit de la fenêtre en cours : la dérive (le régime
   // change-t-il ?) séparée de la dispersion (la mer bouge, c'est normal).
   const m = live.metrics;
+  // Un bloc replié doit dire dans son résumé s'il vaut la peine d'être ouvert.
+  // Ici : le verdict de la fenêtre en cours — c'est la seule question qu'on se
+  // pose devant ces chiffres, et elle a une réponse en trois mots.
+  const foldM = $('#foldMetrics');
+  if (foldM) {
+    const has = !!(m && m.awaSpread != null);
+    foldM.hidden = !has;
+    $('#metricsSum').textContent = has
+      ? rec
+        ? `steady · ${live.bufferLen || 0}/${live.windowS} s`
+        : `discarded — ${live.reasonLabel || live.reason}`
+      : '';
+  }
   $('#metrics').innerHTML = m && m.awaSpread != null
     ? [
         ['point of sail', `drift ${fmt(m.awaDrift, 0)}°`, `swings ±${fmt(m.awaSpread / 2, 0)}°`],
@@ -224,6 +242,11 @@ async function refreshLive() {
   if (v.navState) parts.push(`navigation.state: ${v.navState}`);
   const eng = live.engine;
   if (eng && eng.source === 'autostate') parts.push('engine state inferred from navigation.state — no engine data on the bus');
+  if (eng && eng.witness)
+    parts.push(
+      `${eng.witness.signals.join(' and ')} has never once reported the engine running, in ` +
+        `${Math.round(eng.witness.observedS / 3600)} h of engine data — either you never start it, or the source cannot tell`
+    );
   if (live.counters && live.counters.errors) parts.push(`⚠ ${live.counters.errors} error(s): ${live.counters.lastError}`);
   if (live.counters && live.counters.rejected) {
     const top = Object.entries(live.counters.rejected).sort((a, b) => b[1] - a[1]).slice(0, 3);
@@ -305,8 +328,11 @@ function renderDeclare(e) {
 }
 
 // ── Pause ───────────────────────────────────────────────────────────────────
-// En pause, plus rien ne s'enregistre — ni points, ni journal brut. Le bandeau
-// est donc volontairement voyant et ne se replie jamais : la seule façon de se
+// En pause, plus rien ne s'enregistre — ni points, ni journal brut. D'où deux
+// endroits, et pas un : le bouton qui la DÉCLENCHE vit dans l'en-tête, à côté
+// de « refresh », parce qu'on y touche trois fois par an et qu'il n'a rien à
+// faire au milieu des instruments ; le bandeau qui la PORTE occupe toute la
+// largeur en haut de page tant qu'elle dure, parce que la seule façon de se
 // tromper avec une pause est de ne plus se rappeler qu'elle est là, et de
 // rentrer d'une belle nav sans un point.
 //
@@ -315,23 +341,31 @@ function renderDeclare(e) {
 const PAUSE_CHOICES = [[60, '1 h'], [240, '4 h'], [0, 'until I resume']];
 
 function renderPause(e) {
-  const el = $('#pauseBox');
-  if (!el) return;
+  const box = $('#pauseBox');
+  const bar = $('#pauseBar');
+  if (!box || !bar) return;
   const p = e && e.pause;
   if (!p) {
-    el.innerHTML = '<button class="act" data-pause="0" data-mins="60">Pause recording…</button>';
+    // Au repos, la pause est un geste rare : un bouton discret à côté de
+    // « refresh », et rien d'autre nulle part.
+    box.innerHTML = '<button class="act" data-pause="0" data-mins="60" title="Stop recording — no points, no raw log">⏸ pause</button>';
+    bar.hidden = true;
+    bar.innerHTML = '';
   } else {
     // Un compte à rebours plutôt qu'une heure de fin : « 38 min left » se lit
     // sans calcul au poste de barre, « until 14:07 » demande de savoir l'heure.
     const left = p.until ? Math.max(0, Math.round((p.until - Date.now()) / 60000)) : null;
-    el.innerHTML =
+    box.innerHTML = '<button class="act give" data-pause="resume">resume</button>';
+    bar.hidden = false;
+    bar.innerHTML =
       `<span class="msg warn">⏸ <b>Paused</b> — nothing is being recorded${
         left == null ? ', until you resume' : ` · <b>${left} min</b> left`
       }.</span>` +
+      '<span class="acts">' +
       PAUSE_CHOICES.map(([m, label]) => `<button class="act" data-pause="1" data-mins="${m}">${label}</button>`).join('') +
-      '<button class="act give" data-pause="resume">Resume</button>';
+      '<button class="act give" data-pause="resume">Resume</button></span>';
   }
-  for (const b of el.querySelectorAll('button'))
+  for (const b of [...box.querySelectorAll('button'), ...bar.querySelectorAll('button')])
     b.addEventListener('click', async () => {
       const resume = b.dataset.pause === 'resume';
       // Le premier clic ouvre une pause d'une heure : le geste courant est
@@ -382,6 +416,15 @@ function syncSail(s) {
   press('#segHead', sail);
   press('#segReef', reef);
   $('#reefGroup').style.display = REEFABLE.has(sail) ? '' : 'none';
+  // Replié, le bloc doit dire ce qui est gréé : sinon il faudrait l'ouvrir
+  // pour vérifier, ce qui annule le pliage. « — » veut dire « rien renseigné »
+  // et se lit comme un rappel : les points partent avec cette étiquette.
+  const sum = $('#sailSum');
+  if (sum) {
+    const label = sailLabel(s);
+    sum.textContent = label === '—' ? '— not set' : `— ${label}`;
+    sum.classList.toggle('warn', label === '—');
+  }
 }
 
 // ── Requêtes ────────────────────────────────────────────────────────────────
@@ -2168,9 +2211,35 @@ function bindControls() {
   }
   syncControls();
 }
+// Le réglage par défaut de chacune des options repliées. Sert à une seule
+// chose, mais elle est essentielle : nommer dans le résumé du bloc TOUT ce qui
+// n'y est plus. Replier des réglages est légitime ; les rendre invisibles ne
+// l'est pas — une polaire lue en « apparent, p90, tacks split » sans que rien
+// ne le dise à l'écran est une polaire qu'on croit connaître.
+const FOLDED_DEFAULTS = { angle: 'water', tack: 'merged', compare: 'none', smooth: 'on', cloud: 'off', history: 'on', testRig: 'off', now: 'on' };
+const FOLDED_LABEL = {
+  angle: { ground: 'wind angle over ground' },
+  tack: { split: 'tacks split' },
+  compare: { speed: 'comparing SOG↔STW', wind: 'comparing true↔apparent' },
+  smooth: { off: 'raw curve' },
+  cloud: { on: 'scatter shown' },
+  history: { off: 'history points hidden' },
+  testRig: { on: 'test rigs included' },
+  now: { off: 'now marker off' },
+};
+
 function syncControls() {
   for (const seg of document.querySelectorAll('#controls .seg'))
     for (const b of seg.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === ui[seg.dataset.key]));
+
+  const changed = Object.keys(FOLDED_DEFAULTS)
+    .filter((k) => ui[k] !== FOLDED_DEFAULTS[k])
+    .map((k) => (FOLDED_LABEL[k] && FOLDED_LABEL[k][ui[k]]) || `${k}: ${ui[k]}`);
+  const sum = $('#moreSum');
+  if (sum) {
+    sum.textContent = changed.length ? `— ${changed.join(' · ')}` : '— all default';
+    sum.classList.toggle('on', changed.length > 0);
+  }
   syncExportHint();
 }
 
@@ -2389,6 +2458,51 @@ async function refreshStatus() {
   state.quality = s.quality || null;
   renderQuality(s.quality);
   renderSailChips(s.sailTags || [], s.disk.runCount);
+  refreshSuspect();
+}
+
+// ── Rattraper le coup ───────────────────────────────────────────────────────
+//
+// Le garde-fou physique ne protège que ce qui entre après lui. Les points déjà
+// enregistrés, eux, restent — et s'ils ont été reversés, la polaire du fonds
+// commun avec. Le bandeau ne se déclenche donc jamais tout seul : il dit ce
+// qu'il a trouvé, et ce qu'il faudrait cliquer.
+//
+// On EXCLUT, on n'efface pas. La mesure a bien eu lieu ; c'est son
+// interprétation qui était fausse. L'exclusion vit dans overrides.json, donc
+// elle est réversible d'un « Clear edits » et un rejeu du brut la conserve.
+async function refreshSuspect() {
+  const bar = $('#suspectBar');
+  if (!bar) return;
+  let d;
+  try {
+    d = await (await fetch(`${API}/api/suspect`)).json();
+  } catch (e) {
+    return;
+  }
+  if (!d || !d.points) {
+    bar.hidden = true;
+    bar.innerHTML = '';
+    return;
+  }
+  const bands = d.bands.map((b) => `${b.points} in ${b.tws} kn`).join(', ');
+  const w = d.worst;
+  bar.hidden = false;
+  bar.innerHTML =
+    `<span class="msg warn"><b>${d.points} recorded point${d.points > 1 ? 's' : ''} faster than the true wind, close-hauled</b>` +
+    ` — ${Math.round(d.hours * 60)} min of sailing (${bands}).` +
+    (w ? ` Worst: <b>${w.sog.toFixed(1)} kn</b> in <b>${w.tws.toFixed(1)} kn</b> of true wind at ${w.twa}°.` : '') +
+    ` A keelboat does not do that under sail, so these are almost certainly engine hours that got past the filter` +
+    ` — usually because the engine data on this boat is present but never changes.` +
+    ` They are still in your polar, and in the shared copy.</span>` +
+    `<span class="acts"><button class="act give" id="btnSuspectExclude">Exclude them</button>` +
+    `<span class="k">reversible — « Clear edits » puts them back, and a raw replay keeps the decision</span></span>`;
+  $('#btnSuspectExclude').onclick = async () => {
+    $('#btnSuspectExclude').disabled = true;
+    await post('/api/suspect/exclude', {});
+    refreshStatus();
+    refreshPolar();
+  };
 }
 
 // Un compteur de points ne dit pas si la polaire vaut quelque chose : 500

@@ -19,7 +19,9 @@ sail a single test run.
   again. → [Why this one](docs/gate.md)
 - 🔥 **Never under engine, never at anchor.** Blunt on purpose: no evidence the
   engine is off, no collection — with a bounded manual declaration for boats
-  with no engine data at all. → [Never under engine, never at
+  with no engine data at all. And because engine data can be present, fresh and
+  yet constant, one check that needs no sensor at all: a keelboat does not
+  outrun the true wind upwind. → [Never under engine, never at
   anchor](docs/engine-detection.md)
 - 🔥 **Tells you whether your speed sensor lies.** Current vs. a genuine
   calibration error, with a ready-to-use correction table for the Airmar

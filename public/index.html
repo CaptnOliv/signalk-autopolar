@@ -32,7 +32,15 @@
 <header>
   <div class="titlerow">
     <h1>Autopolar</h1>
-    <button class="act" id="btnReload" title="Reload everything and re-centre the wind bands on the wind right now">refresh</button>
+    <!-- Les deux gestes qui ne dépendent d'aucune donnée affichée, donc les
+         deux seuls qui ont leur place dans l'en-tête : relancer la lecture, et
+         arrêter d'enregistrer. La pause était au milieu de la carte d'état, où
+         elle séparait les pastilles des tuiles pour un bouton qu'on touche
+         trois fois par an. -->
+    <div class="headacts">
+      <span id="pauseBox"></span>
+      <button class="act" id="btnReload" title="Reload everything and re-centre the wind bands on the wind right now">refresh</button>
+    </div>
   </div>
   <span class="sub" id="headSub">automatic learning</span>
   <!-- Une ligne, jamais un bandeau, jamais un modal : l'appstore SignalK dit
@@ -40,6 +48,13 @@
        page-ci est ouverte en nav. Elle ne met rien à jour toute seule. -->
   <div class="hint" id="updateNote" hidden></div>
 </header>
+
+<!-- En pause, plus rien ne s'enregistre. Le bouton discret de l'en-tête suffit
+     pour la DÉCLENCHER ; pour la porter, non. La seule façon de se tromper avec
+     une pause est d'oublier qu'elle est là et de rentrer d'une belle nav sans
+     un point, donc tant qu'elle dure elle occupe toute la largeur, au-dessus de
+     tout le reste. -->
+<div class="alertbar" id="pauseBar" hidden></div>
 
 <!-- Un coup de pouce. Jamais un modal, jamais au chargement : le bandeau
      n'apparaît qu'une fois la polaire devenue exploitable, jamais hors ligne,
@@ -63,6 +78,13 @@
      peut déjà s'en servir, et sinon ce qu'il reste à naviguer. -->
 <div class="qualitybar" id="quality"></div>
 
+<!-- Rattraper le coup : les points déjà enregistrés que le garde-fou physique
+     n'accepterait plus (plus vite que le vent vrai, au près). Durcir un filtre
+     sans regarder derrière soi laisse la pollution exactement où elle était —
+     et elle ne se reverra plus que comme une case un peu rapide, dans un
+     routage, dans six mois. Voir lib/suspect.js. -->
+<div class="alertbar" id="suspectBar" hidden></div>
+
 <!-- L'état en direct passe avant tout le reste : en nav, la question n'est pas
      « à quoi ressemble la polaire » mais « est-ce que ça enregistre, et sinon
      pourquoi ». -->
@@ -79,22 +101,29 @@
   <!-- N'apparaît que sur un bateau sans aucune donnée moteur : ailleurs, ce
        serait proposer de contredire une mesure par une déclaration. -->
   <div class="row-actions" id="declare"></div>
-  <!-- La pause. Toujours offerte, contrairement à la déclaration : tout bateau
-       a un jour une raison de ne pas vouloir enregistrer — un convoyage, un
-       remorquage, un après-midi d'essais de réglage. Le bandeau reste bien
-       visible tant qu'elle dure, parce que la seule vraie façon de se tromper
-       ici est d'oublier qu'on a mis en pause. -->
-  <div class="row-actions" id="pauseBox"></div>
   <div class="tiles" id="tiles"></div>
-  <div class="metrics" id="metrics"></div>
+  <!-- La dérive et la dispersion de la fenêtre en cours. C'est le diagnostic
+       d'un point refusé, pas une lecture de nav : replié, avec le verdict dans
+       le résumé pour qu'on sache s'il vaut la peine d'être ouvert. -->
+  <details class="fold" id="foldMetrics" hidden>
+    <summary>Window detail <span class="k" id="metricsSum"></span></summary>
+    <div class="metrics" id="metrics"></div>
+  </details>
   <div class="hint" id="liveHint"></div>
   <div class="row-actions" id="ntfyBox"></div>
-  <div class="row-actions">
-    <div class="group"><label>Mainsail</label><div class="seg" id="segMain"></div></div>
-    <div class="group"><label>Headsail</label><div class="seg" id="segHead"></div></div>
-    <div class="group" id="reefGroup"><label>Reef</label><div class="seg" id="segReef"></div></div>
-    <span class="msg" id="sailMsg"></span>
-  </div>
+  <!-- La voilure est une SAISIE, pas un relevé : trois rangées de boutons
+       qu'on touche à chaque changement de voile et jamais entre deux. Repliée,
+       le résumé dit ce qui est gréé — donc l'ouvrir n'est utile que pour le
+       corriger. -->
+  <details class="fold" id="foldSail">
+    <summary>Sail plan <span class="k" id="sailSum"></span></summary>
+    <div class="row-actions">
+      <div class="group"><label>Mainsail</label><div class="seg" id="segMain"></div></div>
+      <div class="group"><label>Headsail</label><div class="seg" id="segHead"></div></div>
+      <div class="group" id="reefGroup"><label>Reef</label><div class="seg" id="segReef"></div></div>
+      <span class="msg" id="sailMsg"></span>
+    </div>
+  </details>
 </section>
 
 <div class="layout">
@@ -113,16 +142,6 @@
             <button data-v="true">true</button><button data-v="apparent">apparent</button>
           </div>
         </div>
-        <!-- Le repère dans lequel l'angle du vent est lu. « over ground »
-             retire la dérive du bateau : c'est l'angle qu'on fait vraiment,
-             pas celui qu'on barre. Le groupe disparaît tant que la dérive n'a
-             pas été mesurée — un bouton qui ne change rien est pire qu'absent. -->
-        <div class="group" id="angleGroup" hidden>
-          <label>Wind angle</label>
-          <div class="seg" data-key="angle" title="Read the wind angle from the boat's axis, or from the track it actually makes over the ground">
-            <button data-v="water">through water</button><button data-v="ground">over ground</button>
-          </div>
-        </div>
         <div class="group">
           <label>Value</label>
           <div class="seg" data-key="stat">
@@ -130,61 +149,87 @@
             <button data-v="p90">p90</button><button data-v="max">max</button>
           </div>
         </div>
-        <div class="group">
-          <label>Tacks</label>
-          <div class="seg" data-key="tack">
-            <button data-v="merged">merged</button><button data-v="split">split</button>
+        <!-- Les huit autres. Ils ne changent pas CE QU'ON LIT (une vitesse,
+             un vent, une statistique) mais COMMENT on le lit, et on les règle
+             une fois pour toutes : dépliés en permanence, ils faisaient dix
+             rangées de boutons au-dessus du diagramme, sur un écran de
+             téléphone tenu d'une main. Le résumé nomme tout ce qui n'est pas au
+             réglage par défaut — un réglage qui change la lecture n'a pas le
+             droit d'être invisible, c'est la seule raison pour laquelle ils
+             étaient tous à l'air libre. -->
+        <details class="fold more" id="foldMore">
+          <summary>More options <span class="k" id="moreSum"></span></summary>
+          <div class="controls">
+            <!-- Le repère dans lequel l'angle du vent est lu. « over ground »
+                 retire la dérive du bateau : c'est l'angle qu'on fait vraiment,
+                 pas celui qu'on barre. Le groupe disparaît tant que la dérive
+                 n'a pas été mesurée — un bouton qui ne change rien est pire
+                 qu'absent. -->
+            <div class="group" id="angleGroup" hidden>
+              <label>Wind angle</label>
+              <div class="seg" data-key="angle" title="Read the wind angle from the boat's axis, or from the track it actually makes over the ground">
+                <button data-v="water">through water</button><button data-v="ground">over ground</button>
+              </div>
+            </div>
+            <div class="group">
+              <label>Tacks</label>
+              <div class="seg" data-key="tack">
+                <button data-v="merged">merged</button><button data-v="split">split</button>
+              </div>
+            </div>
+            <div class="group">
+              <label>Compare</label>
+              <div class="seg" data-key="compare">
+                <button data-v="none">off</button><button data-v="speed">SOG↔STW</button><button data-v="wind">true↔apparent</button>
+              </div>
+            </div>
+            <div class="group">
+              <label>Curve</label>
+              <div class="seg" data-key="smooth">
+                <button data-v="on">smoothed</button><button data-v="off">raw</button>
+              </div>
+            </div>
+            <div class="group">
+              <label>Scatter</label>
+              <div class="seg" data-key="cloud">
+                <button data-v="on">on</button><button data-v="off">off</button>
+              </div>
+            </div>
+            <!-- Les points reconstruits depuis l'historique du serveur. Le
+                 filtre n'existe que parce qu'on doit pouvoir regarder la
+                 polaire des seules mesures prises en direct, sans rien
+                 effacer. Le groupe reste caché tant qu'il n'y a pas
+                 d'ébauche. -->
+            <div class="group" id="draftGroup" hidden>
+              <label>History API</label>
+              <div class="seg" data-key="history" title="Points drafted from the server history store">
+                <button data-v="on">included</button><button data-v="off">hidden</button>
+              </div>
+            </div>
+            <!-- Les navigations avec une voile explicitement absente — sans
+                 grand-voile, au seul génois — sont des essais, pas la polaire
+                 du bateau. Elles sortent par défaut ; ce groupe sert à les
+                 regarder quand même, et reste caché tant qu'aucune n'a été
+                 enregistrée. Sélectionner cette voilure dans le filtre
+                 ci-dessous les rallume de toute façon : on ne demande pas à
+                 voir quelque chose pour s'entendre répondre « vide ». -->
+            <div class="group" id="testRigGroup" hidden>
+              <label>Test rigs</label>
+              <div class="seg" data-key="testRig" title="Sailing with a sail deliberately not set (no main, no headsail)">
+                <button data-v="on">included</button><button data-v="off">hidden</button>
+              </div>
+            </div>
+            <!-- Où on se situe en ce moment sur la courbe. C'est le réglage
+                 qu'on veut allumé en nav et éteint quand on analyse au
+                 mouillage. -->
+            <div class="group">
+              <label>Where I am now</label>
+              <div class="seg" data-key="now" title="Show the boat's current position on the polar, and how it compares">
+                <button data-v="on">on</button><button data-v="off">off</button>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="group">
-          <label>Compare</label>
-          <div class="seg" data-key="compare">
-            <button data-v="none">off</button><button data-v="speed">SOG↔STW</button><button data-v="wind">true↔apparent</button>
-          </div>
-        </div>
-        <div class="group">
-          <label>Curve</label>
-          <div class="seg" data-key="smooth">
-            <button data-v="on">smoothed</button><button data-v="off">raw</button>
-          </div>
-        </div>
-        <div class="group">
-          <label>Scatter</label>
-          <div class="seg" data-key="cloud">
-            <button data-v="on">on</button><button data-v="off">off</button>
-          </div>
-        </div>
-        <!-- Les points reconstruits depuis l'historique du serveur. Le
-             filtre n'existe que parce qu'on doit pouvoir regarder la polaire
-             des seules mesures prises en direct, sans rien effacer. Le
-             groupe reste caché tant qu'il n'y a pas d'ébauche. -->
-        <div class="group" id="draftGroup" hidden>
-          <label>History API</label>
-          <div class="seg" data-key="history" title="Points drafted from the server history store">
-            <button data-v="on">included</button><button data-v="off">hidden</button>
-          </div>
-        </div>
-        <!-- Les navigations avec une voile explicitement absente — sans
-             grand-voile, au seul génois — sont des essais, pas la polaire du
-             bateau. Elles sortent par défaut ; ce groupe sert à les regarder
-             quand même, et reste caché tant qu'aucune n'a été enregistrée.
-             Sélectionner cette voilure dans le filtre ci-dessous les rallume
-             de toute façon : on ne demande pas à voir quelque chose pour
-             s'entendre répondre « vide ». -->
-        <div class="group" id="testRigGroup" hidden>
-          <label>Test rigs</label>
-          <div class="seg" data-key="testRig" title="Sailing with a sail deliberately not set (no main, no headsail)">
-            <button data-v="on">included</button><button data-v="off">hidden</button>
-          </div>
-        </div>
-        <!-- Où on se situe en ce moment sur la courbe. C'est le réglage qu'on
-             veut allumé en nav et éteint quand on analyse au mouillage. -->
-        <div class="group">
-          <label>Where I am now</label>
-          <div class="seg" data-key="now" title="Show the boat's current position on the polar, and how it compares">
-            <button data-v="on">on</button><button data-v="off">off</button>
-          </div>
-        </div>
+        </details>
       </div>
       <!-- Le filtre de voilure est ce qui donne son sens au marquage : sans
            lui on enregistre une étiquette qu'on ne peut jamais relire. -->
