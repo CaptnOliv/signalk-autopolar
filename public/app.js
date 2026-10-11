@@ -223,7 +223,7 @@ async function refreshLive() {
   }
   $('#metrics').innerHTML = m && m.awaSpread != null
     ? [
-        ['point of sail', `drift ${fmt(m.awaDrift, 0)}°`, `swings ±${fmt(m.awaSpread / 2, 0)}°`],
+        ['point of sail', `drift ${fmt(m.awaDrift, 0)}°`, `swings ±${fmt(m.awaSpread / 2, 0)}°${m.awaSpreadSmoothed != null ? `, ±${fmt(m.awaSpreadSmoothed / 2, 0)}° without masthead roll` : ''}`],
         ['wind', `drift ${fmt(m.twsDrift, 1)} kn`, `swings ±${fmt(m.twsSpread / 2, 1)} kn`],
         ['speed', `drift ${fmt(m.sogDrift, 1)} kn`, `swings ±${fmt(m.sogSpread / 2, 1)} kn`],
         ['heading', `turned ${fmt(m.hdgDrift, 0)}°`, `rate of turn ${fmt(m.rotMean, 1)}°/s`],

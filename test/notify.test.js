@@ -128,8 +128,12 @@ function startPlugin(options) {
   sent.length = 0;
   const [p2, t2] = startPlugin({ windowS: 30, idleAlertMin: 1, ntfyUrl: 'https://ntfy.test/jazzy', ntfyToken: 'tk_test' });
   // 90 s d'allure qui part dans tous les sens (rien ne peut être retenu),
-  // puis un régime propre.
-  await ticks(t2, 200, (i) => (i < 90 ? { sog: 6, awa: 40 + (i % 2 ? 40 : -40), hdg: 100 } : { sog: 6, awa: 40, hdg: 100 }));
+  // puis un régime propre. Le vent se promène LENTEMENT, sur 20 s : une
+  // alternance d'une seconde à l'autre serait prise pour le balancement de la
+  // tête de mât, moyennée (`awaSmoothS`), et les points sortiraient.
+  await ticks(t2, 200, (i) =>
+    i < 90 ? { sog: 6, awa: 60 + 35 * Math.sin((2 * Math.PI * i) / 20), hdg: 100 } : { sog: 6, awa: 40, hdg: 100 }
+  );
   const titles = sent.map((m) => m.title);
   assert.ok(titles.some((t) => /nothing is coming in/.test(t)), `alerte partie (${titles.join(' | ')})`);
   assert.ok(titles.some((t) => /collecting again/.test(t)), `retour à la normale signalé (${titles.join(' | ')})`);

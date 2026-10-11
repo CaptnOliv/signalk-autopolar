@@ -22,8 +22,21 @@ So what invalidates a point is not that the numbers *move*, it is that they
 - **spread** — the swing around that mean. Tolerated generously (±22° of
   apparent wind angle, ±4 kn of wind, ±1.25 kn of boat speed by default), and
   it is exactly what gets averaged. The ceilings are guard rails only: past
-  them nothing is being measured any more (masthead unit flogging in a rail-to-
-  rail roll, a run of surfs).
+  them nothing is being measured any more (a wind that really is all over the
+  place, a run of surfs).
+
+**The masthead swing is averaged out before the apparent wind is judged.**
+Downwind in a swell the wind vane measures its own motion as well as the wind:
+the masthead sweeps several metres with every roll. Measured over 70 h of raw
+log, that motion is worth about 2.4 kn sideways *whatever the wind strength* —
+the signature of a sensor that moves, not of a wind that wanders — so it is
+±10° in 16 kn of apparent wind and ±50° in 7 kn. Read raw, it rejected 98 % of
+the minutes sailed between 140° and 160° true, and showed a gybe a minute dead
+downwind. The tack test and the spread ceiling therefore look at the apparent
+wind averaged over one roll period (`awaSmoothS`, 5 s by default): a running
+average cancels a swing only when it lasts a full period, so shorter leaves
+part of it and longer adds nothing. The recorded point is still the mean of the
+raw readings over the whole window.
 
 **The window slides, it is not flushed.** One second out of bounds does not
 cost you the previous 59: as soon as it drops off the far end, the window

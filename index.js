@@ -23,7 +23,7 @@ const path = require('path');
 const { MS_TO_KN, R2D, wrap180, trueWind } = require('./lib/geom');
 const { classify, assessWindow, condense } = require('./lib/gate');
 const polarLib = require('./lib/polar');
-const { createStore } = require('./lib/store');
+const { createStore, carryExcluded } = require('./lib/store');
 const { createNotifier } = require('./lib/notify');
 const speedo = require('./lib/speedo');
 const leewayLib = require('./lib/leeway');
@@ -87,6 +87,7 @@ const DEFAULTS = {
       windowS: 60,
       awaDriftMaxDeg: 15,
       awaSpreadMaxDeg: 45,
+      awaSmoothS: 5,
       twsDriftMaxKn: 3,
       twsSpreadMaxKn: 8,
       sogDriftMaxKn: 1.5,
@@ -358,8 +359,15 @@ module.exports = function (app) {
             type: 'number',
             title: 'Max apparent wind angle spread (deg)',
             description:
-              'A ceiling, not a demand for steadiness: in a seaway the masthead unit swings 20-30 deg without the point of sail changing at all, and that swing is exactly what gets averaged. Past the ceiling nothing is being measured any more (rolling gunwale to gunwale).',
+              'A ceiling, not a demand for steadiness: it is judged once the masthead swing has been averaged out (see the next setting), and what remains is the wind itself wandering — which is exactly what gets averaged into the point. Past the ceiling nothing is being measured any more.',
             default: 45,
+          },
+          awaSmoothS: {
+            type: 'number',
+            title: 'Average the masthead swing out over (s)',
+            description:
+              'Set it to your roll period. Downwind in a swell the masthead unit measures its own motion as well as the wind: a couple of knots of sideways speed, which is ±50 deg of apparent angle in 7 kn of apparent wind. Read raw, that looks like an erratic wind and like a gybe every minute, and almost nothing is recorded. A running average cancels a swing only if it lasts one full period — shorter leaves part of it, longer adds nothing. It is used to judge the window (tack and spread), never to compute the recorded point. 0 judges the raw readings.',
+            default: 5,
           },
           twsDriftMaxKn: {
             type: 'number',
@@ -2117,8 +2125,14 @@ module.exports = function (app) {
     router.post('/api/rebuild', (req, res) => {
       const b = body(req);
       const newRuns = rebuild(b.opts);
-      if (!b.dryRun) store.replaceRuns(newRuns);
-      res.json({ ok: true, count: newRuns.length, applied: !b.dryRun });
+      // Les exclusions suivent les moments, pas les identifiants : voir
+      // carryExcluded. Calculé aussi à blanc, pour pouvoir l'annoncer.
+      const carried = carryExcluded(store.liveRuns(), store.excluded(), newRuns);
+      if (!b.dryRun) {
+        store.replaceRuns(newRuns);
+        store.setExcluded(carried, true);
+      }
+      res.json({ ok: true, count: newRuns.length, excluded: carried.length, applied: !b.dryRun });
     });
 
     router.post('/api/reset', (req, res) => {

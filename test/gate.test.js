@@ -176,6 +176,68 @@ assert.strictEqual(assessWindow(win(9, (i) => ({ sog: 6 + (i % 2 ? 2 : -2) })), 
 // n'est pas un changement d'amure.
 assert.strictEqual(assessWindow(win(9, (i) => ({ awa: i % 2 ? 175 : -175 })), OPTS).stable, true);
 
+// ── Le balancement de la tête de mât n'est pas du vent ────────────────────
+//
+// Les scénarios ci-dessous reprennent ce qu'a montré le brut de Jazzy au
+// portant dans la houle : une oscillation à la période du roulis (5 s),
+// d'amplitude constante en nœuds, donc énorme en degrés dès que l'apparent
+// est faible. Fenêtre de 60 s, comme à bord.
+const { smoothApparent } = require('../lib/gate');
+const ROLL = Object.assign({}, OPTS, { windowS: 60, awaSmoothS: 5 });
+const RAW = Object.assign({}, ROLL, { awaSmoothS: 0 });
+// Apparent vu d'une tête de mât qui balaie `swayKn` nœuds de travers à la
+// période `periodS` : on compose les vitesses, comme le fait la vraie girouette.
+const masthead = (meanAwa, aws, swayKn, periodS) => (i) => {
+  const r = (meanAwa * Math.PI) / 180;
+  const x = aws * Math.cos(r);
+  const y = aws * Math.sin(r) + swayKn * Math.sin((2 * Math.PI * i) / periodS);
+  return { awa: (Math.atan2(y, x) * 180) / Math.PI, aws: Math.hypot(x, y), twa: 150, tws: 14 };
+};
+
+// Grand largue, 7 nd d'apparent, 3,5 nd de balancement : ±27° lus à la
+// girouette. Le brut refuse, le lissé retient — et dit les deux chiffres.
+const largue = win(60, masthead(135, 7, 3.5, 5));
+assert.strictEqual(assessWindow(largue, RAW).reason, 'wind_erratic', 'sans lissage, le roulis passe pour du vent erratique');
+const largueOk = assessWindow(largue, ROLL);
+assert.strictEqual(largueOk.stable, true, `allure tenue, mât qui balance : doit être retenu (${largueOk.reason})`);
+assert.ok(largueOk.metrics.awaSpread > 45, 'la girouette a bien balayé plus que le plafond');
+assert.ok(largueOk.metrics.awaSpreadSmoothed < 2, 'et il n\'en reste presque rien une fois la période moyennée');
+assert.strictEqual(assessWindow(largue, RAW).metrics.awaSpreadSmoothed, undefined, 'pas de lissage, pas de second chiffre');
+
+// Plein vent arrière : l'apparent se balance de part et d'autre de 180° et
+// ressort sous 160° de l'autre bord. Ce n'est pas un empannage.
+const arriere = win(60, masthead(172, 6, 3.5, 5));
+assert.strictEqual(assessWindow(arriere, RAW).reason, 'tack_change', 'le brut y voyait un changement d\'amure');
+assert.strictEqual(assessWindow(arriere, ROLL).stable, true, 'le lissé non');
+
+// Un VRAI empannage, lui, reste une manœuvre — roulis compris.
+const empannage = win(60, (i) => masthead(i < 30 ? 140 : -140, 8, 3.5, 5)(i));
+assert.strictEqual(assessWindow(empannage, ROLL).reason, 'tack_change');
+// Et un vrai virement aussi, y compris quand il tombe en fin de fenêtre.
+assert.strictEqual(assessWindow(win(60, (i) => ({ awa: i < 30 ? 35 : -35 })), ROLL).reason, 'tack_change');
+assert.strictEqual(assessWindow(win(60, (i) => ({ awa: i < 54 ? 35 : -35 })), ROLL).reason, 'tack_change');
+
+// Le lissage ne doit rien pardonner d'autre que le roulis : un vent qui se
+// promène vraiment (±35° sur 20 s) reste erratique, et une allure qui s'en va
+// reste une allure qui change.
+const promene = win(60, (i) => ({ awa: 90 + 35 * Math.sin((2 * Math.PI * i) / 20) }));
+assert.strictEqual(assessWindow(promene, ROLL).reason, 'wind_erratic');
+assert.strictEqual(assessWindow(win(60, (i) => ({ awa: 40 + i * 0.5 })), ROLL).reason, 'course_changed');
+
+// Une moyenne glissante n'annule une oscillation que sur une période entière :
+// à 5 s il ne reste rien d'un roulis de 5 s, à 3 s il en reste la moitié.
+const amp = (k) => {
+  const a = smoothApparent(win(60, masthead(135, 7, 3.5, 5)), k);
+  return Math.max(...a) - Math.min(...a);
+};
+// Seules les tranches complètes sont rendues : 60 secondes, 56 tranches de 5.
+assert.strictEqual(smoothApparent(largue, 5).length, 56);
+assert.ok(amp(5) < 1, `période entière : oscillation annulée (${amp(5).toFixed(1)}°)`);
+assert.ok(amp(3) > 20, `période partielle : il en reste (${amp(3).toFixed(1)}°)`);
+// 0 et 1 rendent le brut tel quel.
+assert.deepStrictEqual(smoothApparent(largue, 0), largue.map((x) => x.awa));
+assert.deepStrictEqual(smoothApparent(largue, 1), largue.map((x) => x.awa));
+
 const c = condense(win(9), { id: 42 });
 assert.strictEqual(c.id, 42);
 assert.strictEqual(c.n, 9);
