@@ -1294,8 +1294,14 @@ function renderSailHistory() {
   // demander. On la garde visible le temps de la nav en cours, puis on la
   // range : sans ça la liste ne fait que croître d'une sortie à l'autre, et
   // les périodes qui attendent vraiment une décision se noient dedans.
+  //
+  // Une période jamais traitée finit par sortir aussi, plus tard : au bout de
+  // quelques jours plus personne ne sait quand le ris a été pris, et une
+  // question sans réponse possible noie celles qui en ont une. Le repli à 5
+  // sert quand la webapp est plus récente que le serveur qui lui répond.
   const cutoff = d.hideHandledAfterDays == null ? 2 : d.hideHandledAfterDays;
-  const isHidden = (seg) => seg.handled && seg.ageDays > cutoff;
+  const stale = d.hideUnhandledAfterDays == null ? 5 : d.hideUnhandledAfterDays;
+  const isHidden = (seg) => seg.ageDays > (seg.handled ? cutoff : stale);
   const hidden = d.segments.filter(isHidden).length;
   const shown = sailHist.showAll ? d.segments : d.segments.filter((seg) => !isHidden(seg));
 
@@ -1383,7 +1389,7 @@ function renderSailHistory() {
     `<div class="seglist">${rows}</div>` +
     (hidden
       ? `<div class="row-actions"><button class="act" id="btnShowAll">${
-          sailHist.showAll ? 'hide handled' : `show ${hidden} handled`
+          sailHist.showAll ? 'hide older' : `show ${hidden} older`
         }</button></div>`
       : '') +
     `<div class="hint">Rows are cut where performance stepped up or down once wind and angle are accounted for,

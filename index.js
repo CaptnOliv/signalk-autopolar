@@ -108,6 +108,7 @@ const DEFAULTS = {
       twaStep: 5,
       minSamples: 1,
       sailHistoryDays: 2,
+      sailUnhandledDays: 5,
       sailHandledCoverage: 0.9,
       sailChangeSide: 6,
       sailChangeMinStepKn: 0.5,
@@ -450,6 +451,13 @@ module.exports = function (app) {
             description:
               'A stretch you have corrected or confirmed stops asking for attention once it is this old. Without it the list only ever grows, one passage after another, and the periods that still need a decision get lost among those that do not. Nothing is deleted — a toggle brings them all back.',
             default: 2,
+          },
+          sailUnhandledDays: {
+            type: 'number',
+            title: 'Hide sail-plan stretches nobody reviewed older than (days)',
+            description:
+              'A stretch you never corrected or confirmed stops asking too, once it is this old: past a few days nobody remembers when the reef went in, and a question that cannot be answered only buries the ones that can. Its points keep the sail plan they were recorded with. Nothing is deleted — the same toggle brings them back.',
+            default: 5,
           },
           sailHandledCoverage: {
             type: 'number',
@@ -1970,6 +1978,7 @@ module.exports = function (app) {
       );
       for (const seg of out.segments) seg.ageDays = (Date.now() - seg.to) / 86400000;
       out.hideHandledAfterDays = opts.sailHistoryDays;
+      out.hideUnhandledAfterDays = opts.sailUnhandledDays;
       const excl = store.excluded();
       for (const seg of out.segments) {
         const inSeg = runs.filter((r) => r.ts >= seg.from && r.ts <= seg.to);

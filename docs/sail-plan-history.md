@@ -44,6 +44,13 @@ is a few days old (configurable, `sailHistoryDays`) — the list is meant to gro
 one open question at a time, not accumulate every decision ever made. Nothing
 is deleted; a toggle in the web app brings the handled stretches back.
 
+A stretch you never got round to drops out as well, a little later (5 days,
+`sailUnhandledDays`). Past that point nobody remembers when the reef went in,
+and a question that can no longer be answered only buries the ones that can.
+Its points keep the sail plan they were recorded with, and the same toggle
+brings it back. Two short gaps are forgiven on the way: a hole of under 20
+minutes between two stretches you did handle counts as handled with them.
+
 ## Why "handled" is counted in points, not in minutes
 
 Segment boundaries are not data, they are deductions: they come out of a

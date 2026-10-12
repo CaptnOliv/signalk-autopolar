@@ -158,6 +158,41 @@ const build = (runs) => polar.buildPolar(runs, { minSamples: 1, twaStep: 5 });
   sc.markHandled(segs5, runs, []);
   assert.strictEqual(segs5[0].handled, null);
   assert.strictEqual(segs5[0].handledPts, 0);
+
+  // Une couture : deux plages traitées qui laissent trois points entre elles.
+  // Bordé des deux côtés et plus court que la résolution du détecteur, le trou
+  // ne peut pas être une période à lui seul — sans ça, 7 points sur 10 font
+  // revenir éternellement une période que l'équipage a réglée en deux fois.
+  const segs6 = [{ from: T0, to: T0 + 9 * MIN, n: 10 }];
+  sc.markHandled(segs6, runs, [
+    { from: T0, to: T0 + 2 * MIN, kind: 'reviewed', index: 0 },
+    { from: T0 + 6 * MIN, to: T0 + 9 * MIN, kind: 'corrected', index: 1 },
+  ]);
+  assert.strictEqual(segs6[0].handledPts, 10, 'les trois points de la couture comptent comme couverts');
+  assert.strictEqual(segs6[0].handled, 'reviewed', 'traité, mais pas « corrigé » : la couture ne porte aucune correction');
+
+  // Le même trou, trop long pour être une couture : c'est une période que
+  // personne n'a regardée, et elle reste à statuer.
+  const segs7 = [{ from: T0, to: T0 + 9 * MIN, n: 10 }];
+  sc.markHandled(
+    segs7,
+    runs,
+    [
+      { from: T0, to: T0 + 2 * MIN, kind: 'reviewed', index: 0 },
+      { from: T0 + 6 * MIN, to: T0 + 9 * MIN, kind: 'reviewed', index: 1 },
+    ],
+    { seamMs: 3 * MIN }
+  );
+  assert.strictEqual(segs7[0].handledPts, 7);
+  assert.strictEqual(segs7[0].handled, null);
+
+  // Bordé d'un seul côté : ce n'est pas une couture, c'est la suite. Une
+  // période confirmée en cours de nav et qui a continué de grandir doit
+  // redemander — rien ne dit que la voilure n'a pas changé depuis.
+  const segs8 = [{ from: T0, to: T0 + 9 * MIN, n: 10 }];
+  sc.markHandled(segs8, runs, [{ from: T0, to: T0 + 7 * MIN, kind: 'reviewed', index: 0 }]);
+  assert.strictEqual(segs8[0].handledPts, 8);
+  assert.strictEqual(segs8[0].handled, null);
 }
 
 console.log('sailchange: ok');

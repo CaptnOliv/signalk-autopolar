@@ -52,6 +52,8 @@ until you press the button.
 the sail plan after the fact](sail-plan-history.md) keeps showing before it
 drops out of the list (2 days by default). Nothing is deleted — a toggle in the
 web app brings the handled stretches back regardless of age.
+`sailUnhandledDays` does the same for a stretch nobody ever reviewed (5 days by
+default): its points simply keep the sail plan they were recorded with.
 
 `supportPrompt` controls the one banner described in [Supporting the
 plugin](support.md). Off means it never appears. `usageStats` controls the
