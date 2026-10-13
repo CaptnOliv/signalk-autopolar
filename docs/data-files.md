@@ -75,7 +75,11 @@ plugin either finishes the job or starts it over, without losing or doubling a
 line. Lines truncated by an earlier power cut are dropped on the way (they
 were already skipped at every replay). Raw logging and replays carry on
 normally while it runs. Taking a copy of `samples.jsonl` before upgrading
-costs nothing and is still a good idea.
+costs nothing and is still a good idea. Measured on a Raspberry Pi 5 with
+20 days of sailing (486,125 lines, 94.7 MB): 5.3 s, the event loop never held
+for more than 50 ms, 14.3 MB on disk afterwards, and the replay gives the same
+points as before, byte for byte. If the split fails, `samples.jsonl` is left
+untouched and the web app says so on its disk line.
 
 **Power cuts in general.** Every operation on the raw log (splitting,
 compressing a month, deleting one for room) writes temporary `*.tmp` files

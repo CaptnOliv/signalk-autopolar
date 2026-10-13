@@ -2452,6 +2452,10 @@ async function refreshStatus() {
   $('#diskHint').textContent =
     `${s.disk.runCount} points${draft ? ` (${draft} drafted from history)` : ''} · raw log ${mb} MB on disk${s.disk.samplesFull ? ' (FULL — raw logging stopped)' : ''}` +
     (s.disk.droppedMonths && s.disk.droppedMonths.length ? ` (deleted to make room: ${s.disk.droppedMonths.join(', ')})` : '') +
+    // La migration du brut ne se montre que si elle a échoué : réussie, elle
+    // dure 5 s une seule fois (mesuré sur Jazzy, 95 Mo) et n'apprend rien à
+    // personne ; ratée, samples.jsonl reste en place et rien d'autre ne le dit.
+    (s.disk.sampleMigration && s.disk.sampleMigration.error ? ` · ⚠ raw log not split by month, samples.jsonl kept as is: ${s.disk.sampleMigration.error}` : '') +
     ` · ${s.excluded} point(s) excluded · ${s.overrides} cell(s) overridden` +
     (s.disk.writeErrors ? ` · ⚠ ${s.disk.writeErrors} failed write(s): ${s.disk.lastWriteError}` : '');
   // Le filtre n'apparaît que s'il a quelque chose à filtrer : un segment
