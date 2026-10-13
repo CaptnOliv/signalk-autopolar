@@ -57,8 +57,9 @@ caught up with the boat.
 - **Export** — `.pol` (qtVlm, OpenCPN, Expedition), Jieter text (semicolon
   matrix with VMG target rows, the format the ORC world and Polar Management
   read), CSV with the sample count per cell, full JSON backup, and the raw
-  `.jsonl`. **Send to Polar Management** appears when that plugin is installed
-  on the same server — see [Polar Management hand-off](polar-management.md).
+  `.jsonl` (every month of the raw log in one file, decompressed on the fly).
+  **Send to Polar Management** appears when that plugin is installed on the
+  same server — see [Polar Management hand-off](polar-management.md).
 
   **What is in the file is what the diagram shows** — SOG or STW, true or
   apparent wind, wind angle through the water or over the ground, median or

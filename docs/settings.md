@@ -39,6 +39,15 @@ it to 0 to switch the rule off; foiling boats really do outrun the wind
 upwind. The raw log is never filtered by it, so a replay can always revisit
 the decision.
 
+`maxSampleMB` caps the raw log **as it sits on disk**, compressed months
+included (500 MB by default, roughly 4,000 hours of sailing). At the cap, raw
+logging stops — the points keep coming — and starts again by itself if
+compressing a month that has just ended frees room. `dropOldestSamples` (off by
+default) changes that: whole closed months are deleted, oldest first, to make
+room, never the current one, and each deletion is logged. A deleted month can
+no longer be replayed, which is why it is not the default. See [Data
+files](data-files.md#the-raw-log-one-file-per-month).
+
 `publishPerformance` is left off until the polar has proved itself, and should
 stay off if another polar plugin is installed: they would all write to the same
 `performance.*` paths.

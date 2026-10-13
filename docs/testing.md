@@ -31,7 +31,14 @@ measured on a store whose 1-second buckets are one-third empty, and an
 already-watched period is left alone), `timefmt` (the times typed by hand use
 the offset in force **at the instant being edited**, not today's — a difference
 that only shows up across a daylight-saving boundary, so the test re-runs itself
-under `TZ=Europe/Athens` rather than passing vacuously under UTC) and `smoke` —
+under `TZ=Europe/Athens` rather than passing vacuously under UTC), `samples`
+(the raw log is split by the month of each line, read back in order across
+gzipped and plain files, the old single file is migrated line for line — and
+the migration is killed with `SIGKILL` in a child process, at random points
+and right in the middle of its commit, then restarted, until it has gone
+through without losing or doubling a line; plus a truncated line, the size cap
+with and without deleting old months, and a reset in the middle of a
+migration) and `smoke` —
 which runs the whole plugin
 against a fake SignalK server over a simulated passage: starboard beat, tack,
 port beat, then a leg under engine. It checks that points come out of the

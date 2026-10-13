@@ -18,7 +18,7 @@ Everything. Not just the polar points: **the raw log too**.
 
 That is the whole design decision, and it is worth being explicit about.
 Stopping only the points would have been easier, and it would have been a lie:
-`runs.jsonl` is rebuilt from `samples.jsonl` whenever you replay the raw log or
+`runs.jsonl` is rebuilt from the raw log whenever you replay the raw log or
 change the gate settings, so anything left in the raw log comes back. A pause
 that does not survive a replay is not a pause, it is a display filter.
 

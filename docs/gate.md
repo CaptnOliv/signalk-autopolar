@@ -53,10 +53,16 @@ and spread shown side by side.
 
 ## 2. The raw data is kept
 
-Everything seen under sail is written second by second to `samples.jsonl`,
+Everything seen under sail is written second by second to the raw log,
 *before* the gate. If the thresholds turn out to be wrong for the day's sea
-state, you replay the file ("Replay the raw log") instead of sailing the
-passage again. About 15 MB per 30 h.
+state, you replay it ("Replay the raw log") instead of sailing the passage
+again. About 15 MB per 30 h, in one file per month, gzipped once the month is
+over (about six times smaller) — see [Data files](data-files.md#the-raw-log-one-file-per-month).
+
+A replay reads every month in order, compressed or not, as a stream: it never
+loads a whole file into memory, and it does not freeze the server while it
+runs — the same Raspberry Pi is usually carrying the anchor alarm and the
+autopilot. Lines truncated by a power cut are skipped.
 
 ## 3. Nothing is frozen at collection time
 

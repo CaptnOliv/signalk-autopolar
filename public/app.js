@@ -2445,10 +2445,14 @@ async function refreshHabits() {
 
 async function refreshStatus() {
   const s = await (await fetch(`${API}/api/status`)).json();
+  // Taille réellement occupée : les mois clos comptent compressés, comme
+  // pour le plafond. Une taille décompressée ferait croire le disque plein.
   const mb = (s.disk.sampleBytes / 1048576).toFixed(1);
   const draft = s.disk.historyCount || 0;
   $('#diskHint').textContent =
-    `${s.disk.runCount} points${draft ? ` (${draft} drafted from history)` : ''} · raw log ${mb} MB${s.disk.samplesFull ? ' (FULL)' : ''} · ${s.excluded} point(s) excluded · ${s.overrides} cell(s) overridden` +
+    `${s.disk.runCount} points${draft ? ` (${draft} drafted from history)` : ''} · raw log ${mb} MB on disk${s.disk.samplesFull ? ' (FULL — raw logging stopped)' : ''}` +
+    (s.disk.droppedMonths && s.disk.droppedMonths.length ? ` (deleted to make room: ${s.disk.droppedMonths.join(', ')})` : '') +
+    ` · ${s.excluded} point(s) excluded · ${s.overrides} cell(s) overridden` +
     (s.disk.writeErrors ? ` · ⚠ ${s.disk.writeErrors} failed write(s): ${s.disk.lastWriteError}` : '');
   // Le filtre n'apparaît que s'il a quelque chose à filtrer : un segment
   // « draft points » sur un bateau qui n'en a aucun ne fait que du bruit.

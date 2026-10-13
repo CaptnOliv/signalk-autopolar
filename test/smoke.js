@@ -205,7 +205,10 @@ assert.strictEqual(afterLiar, afterPort, 'plus vite que le vent au près : aucun
 // Le brut ne contient pas le moteur, mais contient bien le virement ET le bord
 // précédent — c'est justement ce qu'on veut pouvoir réexaminer plus tard, y
 // compris pour juger le garde-fou lui-même, qui ne filtre donc pas le brut.
-const samples = fs.readFileSync(path.join(dataDir, 'samples.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+// Un fichier par mois, nommé d'après l'horodatage des lignes : la nav simulée
+// est en septembre 2026.
+const samples = fs.readFileSync(path.join(dataDir, 'samples-2026-09.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+assert.ok(!fs.existsSync(path.join(dataDir, 'samples.jsonl')), "plus d'ancien fichier unique");
 assert.ok(samples.length > 900 && samples.length < 940, `brut = les 920 s sous voile, obtenu ${samples.length}`);
 assert.ok(
   samples.filter((x) => x.tws === 4).length > 250,
@@ -288,11 +291,12 @@ call('POST /api/cell-override', {}, { ws: 12, twa: 45, value: null });
 
 // Rejeu du brut : le filet de sécurité. À seuils identiques il doit retrouver
 // le même nombre de points ; en desserrant la fenêtre, davantage.
-const dry = call('POST /api/rebuild', {}, { dryRun: true, opts: { windowS: 30 } });
-assert.ok(Math.abs(dry.count - afterMotor) <= 1, `rejeu à seuils identiques : ${dry.count} vs ${afterMotor}`);
-assert.strictEqual(call('GET /api/status').disk.runCount, afterMotor, 'un dryRun ne touche à rien');
-const loose = call('POST /api/rebuild', {}, { dryRun: true, opts: { windowS: 15 } });
-assert.ok(loose.count > dry.count, 'une fenêtre plus courte donne plus de points');
+// Le rejeu est asynchrone (lecture du brut en flux) : on le lance ici, sur le
+// brut tel qu'il est à cet instant — la lecture part d'un instantané des
+// fichiers — et on vérifie le résultat dans la partie asynchrone, plus bas.
+const dryP = callAsync('POST /api/rebuild', {}, { dryRun: true, opts: { windowS: 30 } });
+const looseP = callAsync('POST /api/rebuild', {}, { dryRun: true, opts: { windowS: 15 } });
+const runsAtReplay = afterMotor;
 
 // Exports.
 assert.ok(call('GET /api/export.pol', { min: '1' }).startsWith('twa/tws\t'));
@@ -717,6 +721,30 @@ p2.stop();
 //   — les périodes déjà observées en direct ne sont pas ré-importées ;
 //   — les points restent reconnaissables, filtrables, et comptés au partage.
 async function historyTests() {
+  const dry = await dryP;
+  assert.ok(Math.abs(dry.count - runsAtReplay) <= 1, `rejeu à seuils identiques : ${dry.count} vs ${runsAtReplay}`);
+  assert.strictEqual(dry.applied, false, 'un dryRun ne touche à rien');
+  const loose = await looseP;
+  assert.ok(loose.count > dry.count, 'une fenêtre plus courte donne plus de points');
+
+  // L'export du brut sert tous les mois bout à bout, en flux : ici le seul
+  // fichier du mois, à l'octet près.
+  {
+    const { PassThrough } = require('stream');
+    const res = new PassThrough();
+    res.type = () => {};
+    const chunks = [];
+    res.on('data', (c) => chunks.push(c));
+    const ended = new Promise((r) => res.on('end', r));
+    routes['GET /api/samples.jsonl']({ query: {}, body: {} }, res);
+    await ended;
+    assert.strictEqual(
+      Buffer.concat(chunks).toString('utf8'),
+      fs.readFileSync(path.join(dataDir, 'samples-2026-09.jsonl'), 'utf8'),
+      "l'export du brut rend le brut"
+    );
+  }
+
   const HIST_FROM = Date.parse('2026-09-01T08:00:00Z');
   const HIST_MIN = 45;
   // Le brut du magasin : une mesure toutes les 1,5 s, comme sur le vrai — d'où
@@ -866,7 +894,7 @@ async function historyTests() {
 
   // Un rejeu du brut n'efface pas l'ébauche : c'est la raison du fichier
   // séparé. Dans un runs.jsonl commun, elle disparaîtrait sans un mot.
-  const replay = call('POST /api/rebuild', {}, { opts: { windowS: 30 } });
+  const replay = await callAsync('POST /api/rebuild', {}, { opts: { windowS: 30 } });
   assert.ok(replay.count > 0);
   assert.strictEqual(call('GET /api/status').disk.historyCount, imp.points, "le rejeu du brut laisse l'ébauche en place");
 

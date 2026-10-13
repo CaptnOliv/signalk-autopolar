@@ -11,8 +11,9 @@
 //     et il DIT toujours pourquoi il refuse (webapp, panneau « en direct »).
 //
 //  2. On garde le brut. Tout ce qui est vu sous voile est écrit seconde par
-//     seconde dans samples.jsonl, avant tout filtre. Si les seuils étaient
-//     mal réglés, on rejoue le fichier au lieu de refaire la nav.
+//     seconde dans le brut (un fichier par mois, lib/samples.js), avant tout
+//     filtre. Si les seuils étaient mal réglés, on le rejoue au lieu de
+//     refaire la nav.
 //
 //  3. Rien n'est figé à la collecte. Chaque point porte à la fois SOG et STW,
 //     vent vrai et vent apparent : les quatre polaires sont quatre lectures
@@ -104,6 +105,7 @@ const DEFAULTS = {
       engineStaleMs: 180000,
       rawSamples: true,
       maxSampleMB: 500,
+      dropOldestSamples: false,
       twsBins: [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 30],
       twaStep: 5,
       minSamples: 1,
@@ -435,10 +437,23 @@ module.exports = function (app) {
             type: 'boolean',
             title: 'Also log raw data, second by second',
             description:
-              'The safety net: lets you rebuild every point with different thresholds without sailing the passage again. About 15 MB per 30 h, and only while sailing.',
+              'The safety net: lets you rebuild every point with different thresholds without sailing the passage again. About 15 MB per 30 h, and only while sailing; one file per month, gzipped (about six times smaller) once the month is over.',
             default: true,
           },
-          maxSampleMB: { type: 'number', title: 'Max size of the raw log (MB)', default: 500 },
+          maxSampleMB: {
+            type: 'number',
+            title: 'Max size of the raw log (MB)',
+            description:
+              'Counted on disk, compressed months included — 500 MB holds roughly 4,000 hours of sailing. When it is reached, raw logging stops (points are still collected) unless the option below is on.',
+            default: 500,
+          },
+          dropOldestSamples: {
+            type: 'boolean',
+            title: 'When the raw log is full, delete its oldest month',
+            description:
+              'Keeps raw logging going by deleting whole closed months, oldest first, until it fits again. Never the current month. Off by default: a deleted month can no longer be replayed. Each deletion is logged on the server.',
+            default: false,
+          },
           twaStep: { type: 'number', title: 'Angle step of the polar (deg)', default: 5 },
           minSamples: {
             type: 'number',
@@ -976,7 +991,8 @@ module.exports = function (app) {
   function updateStatus() {
     const d = store.diskInfo();
     app.setPluginStatus(
-      `${d.runCount} points · ${REASONS[live.reason] || live.reason} · raw ${(d.sampleBytes / 1048576).toFixed(1)} MB`
+      `${d.runCount} points · ${REASONS[live.reason] || live.reason} · raw ${(d.sampleBytes / 1048576).toFixed(1)} MB` +
+        (d.samplesFull ? ' (FULL — raw logging stopped)' : '')
     );
   }
 
@@ -1128,13 +1144,19 @@ module.exports = function (app) {
   // `hooks` : gapMs (au-delà, la continuité est rompue), sailTag, accept
   // (dernier veto avant de retenir la fenêtre), extra (champs à poser sur le
   // point), reject (comptage des motifs).
-  function windowRuns(snaps, o, hooks = {}) {
+  //
+  // Les instantanés entrent un par un (`push`) : le rejeu du brut les donne
+  // au fil de la lecture au lieu de les accumuler. Mesuré sur un brut
+  // synthétique de la taille de celui de Jazzy (486 000 lignes, 95 Mo) :
+  // garder tous les instantanés avant de découper coûtait ~350 Mo de mémoire,
+  // et le double vers le plafond de 500 Mo — sur le Pi qui porte le pilote.
+  function windower(o, hooks = {}) {
     const gapMs = hooks.gapMs || 3000;
     const out = [];
     let win = [];
     let last = 0;
     const nope = (reason) => hooks.reject && hooks.reject(reason);
-    for (const snap of snaps) {
+    function push(snap) {
       // Trou dans le temps = rupture de continuité, la fenêtre ne vaut plus.
       if (last && snap.ts - last > gapMs) win = [];
       last = snap.ts;
@@ -1143,7 +1165,7 @@ module.exports = function (app) {
       if (!v.usable) {
         win = [];
         nope(v.reason);
-        continue;
+        return;
       }
       const sailTag = hooks.sailTag ? hooks.sailTag(snap) : '|';
       win.push(Object.assign({}, snap, { engineSource: v.engineSource, sailTag }));
@@ -1160,11 +1182,11 @@ module.exports = function (app) {
         // pollue la fenêtre entière — un virement ne « sort » pas d'elle, il
         // la coupe en deux régimes différents.
         if (w.reason === 'tack_change' || w.reason === 'turning') win = [];
-        continue;
+        return;
       }
       if (hooks.accept && !hooks.accept(win, o)) {
         nope('window_spread');
-        continue;
+        return;
       }
       const [main, head] = sailTag.split('|');
       out.push(
@@ -1183,17 +1205,31 @@ module.exports = function (app) {
       );
       win = [];
     }
-    return out;
+    return { push, out };
+  }
+
+  function windowRuns(snaps, o, hooks = {}) {
+    const w = windower(o, hooks);
+    for (const snap of snaps) w.push(snap);
+    return w.out;
   }
 
   // ── Rejeu du brut ──────────────────────────────────────────────────────────
-  // Reconstruit tous les points depuis samples.jsonl avec les seuils courants.
-  // C'est ce qui rend les réglages du filtre réversibles.
-  function rebuild(overrideOpts) {
+  // Reconstruit tous les points depuis le brut avec les seuils courants.
+  // C'est ce qui rend les réglages du filtre réversibles. Asynchrone : la
+  // lecture du brut se fait en flux, mois après mois, sans bloquer le serveur.
+  async function rebuild(overrideOpts) {
     const o = Object.assign({}, opts, overrideOpts || {});
-    const snaps = [];
-    store.eachSample((s) => {
-      snaps.push({
+    const w = windower(o, {
+      gapMs: 3000,
+      sailTag: (snap) => snap.sail || '|',
+      // On restitue l'origine du verdict moteur telle qu'elle était le jour
+      // de la collecte : sans ça un point « déclaré » redeviendrait un point
+      // mesuré au rejeu, et sortirait de la retenue qui l'écarte du partage.
+      extra: (win) => ({ engineSource: win[win.length - 1].eng }),
+    });
+    await store.eachSample((s) => {
+      w.push({
         ts: s.t,
         sog: s.sog,
         stw: s.stw,
@@ -1231,14 +1267,7 @@ module.exports = function (app) {
         },
       });
     });
-    return windowRuns(snaps, o, {
-      gapMs: 3000,
-      sailTag: (snap) => snap.sail || '|',
-      // On restitue l'origine du verdict moteur telle qu'elle était le jour
-      // de la collecte : sans ça un point « déclaré » redeviendrait un point
-      // mesuré au rejeu, et sortirait de la retenue qui l'écarte du partage.
-      extra: (win) => ({ engineSource: win[win.length - 1].eng }),
-    });
+    return w.out;
   }
 
   // ── Ébauche depuis le History API ──────────────────────────────────────────
@@ -1254,9 +1283,9 @@ module.exports = function (app) {
   // Les périodes qu'autopolar a observées lui-même, à pleine fréquence. Un
   // trou de plus d'une fenêtre sépare deux périodes : en dessous, c'est la
   // même veille et on ne veut pas la trouer artificiellement.
-  function liveCoverage() {
+  async function liveCoverage() {
     if (opts.rawSamples) {
-      const cov = store.coverage(Math.max(60000, opts.windowS * 1000), history.toIntervals);
+      const cov = await store.coverage(Math.max(60000, opts.windowS * 1000), history.toIntervals);
       return { intervals: cov.intervals, from: 'raw log' };
     }
     // Sans brut archivé, on n'a que les points retenus. Moins précis (les
@@ -1387,7 +1416,7 @@ module.exports = function (app) {
     // colonnes sans raison.
     const specs = history.planSpecs(keys, engines, resolution >= 5);
 
-    const cov = liveCoverage();
+    const cov = await liveCoverage();
     const rejected = {};
     // On découpe la plage : une seule requête sur trois mois de tranches de
     // 2 s ferait plusieurs millions de lignes en mémoire, côté serveur comme
@@ -2131,9 +2160,15 @@ module.exports = function (app) {
       res.json({ ok: true, sail });
     });
 
-    router.post('/api/rebuild', (req, res) => {
+    router.post('/api/rebuild', async (req, res) => {
       const b = body(req);
-      const newRuns = rebuild(b.opts);
+      let newRuns;
+      try {
+        newRuns = await rebuild(b.opts);
+      } catch (e) {
+        res.json({ ok: false, error: String((e && e.message) || e) });
+        return;
+      }
       // Les exclusions suivent les moments, pas les identifiants : voir
       // carryExcluded. Calculé aussi à blanc, pour pouvoir l'annoncer.
       const carried = carryExcluded(store.liveRuns(), store.excluded(), newRuns);
@@ -2596,9 +2631,14 @@ module.exports = function (app) {
       });
     });
 
+    // Le brut entier, tous les mois bout à bout et décompressés : le même
+    // texte qu'autrefois samples.jsonl, servi en flux. Rien n'est jamais
+    // tenu en mémoire, ni décompressé sur disque.
     router.get('/api/samples.jsonl', (req, res) => {
       res.type('text/plain');
-      fs.createReadStream(store.files().samplesFile).on('error', () => res.end()).pipe(res);
+      const s = store.sampleStream();
+      if (res.on) res.on('close', () => s.destroy());
+      s.pipe(res);
     });
   };
 
@@ -2650,7 +2690,15 @@ module.exports = function (app) {
       }
     }
     startedAt = Date.now();
-    store = createStore(dir, { maxSampleMB: opts.maxSampleMB });
+    store = createStore(dir, {
+      maxSampleMB: opts.maxSampleMB,
+      dropOldestSamples: opts.dropOldestSamples,
+      // Migration, compression d'un mois clos : en debug. Plafond atteint,
+      // mois supprimé, migration impossible : en erreur, parce que c'est du
+      // brut qui ne s'écrit plus ou qui disparaît.
+      log: (m) => app.debug(`[polar] ${m}`),
+      warn: (m) => app.error(`[polar] ${m}`),
+    });
     store.load();
     // Les échecs d'envoi passent par app.error : une file bloquée est une
     // panne, pas un détail de debug, et personne n'active les logs verbeux
@@ -2691,6 +2739,10 @@ module.exports = function (app) {
     witness = null;
     updater = null;
     buffer = [];
+    // Un travail de fond sur le brut (migration, compression) abandonne
+    // proprement : ses .tmp seront jetés au prochain démarrage, les sources
+    // sont intactes.
+    if (store) store.close();
     store = null;
   };
 
