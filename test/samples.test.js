@@ -29,7 +29,12 @@ if (process.argv[2] === 'child') {
     let n = 0;
     fs.renameSync = (...a) => {
       rename(...a);
-      if (++n === crashAt) process.kill(process.pid, 'SIGKILL');
+      if (++n === crashAt) {
+        // Sous Windows, se tuer soi-même ne remonte pas de signal au parent
+        // (code 1, signal null) : on laisse une trace avant de tomber.
+        fs.writeSync(1, `crash ${n}\n`);
+        process.kill(process.pid, 'SIGKILL');
+      }
     };
   }
   const log = createSampleLog(process.argv[3]);
@@ -256,9 +261,13 @@ async function main() {
     const crashed = await new Promise((resolve) => {
       const child = spawn(process.execPath, [__filename, 'child', dir], {
         env: Object.assign({}, process.env, { FAKE_NOW: String(fakeNow), CRASH_AT_RENAME: String(crashAt) }),
-        stdio: ['ignore', 'ignore', 'inherit'],
+        stdio: ['ignore', 'pipe', 'inherit'],
       });
-      child.on('exit', (code, sig) => resolve(sig === 'SIGKILL'));
+      let out = '';
+      child.stdout.on('data', (d) => (out += d));
+      child.on('close', (code, sig) =>
+        resolve(out.includes(`crash ${crashAt}`) && !out.includes('done') && (sig === 'SIGKILL' || code !== 0))
+      );
     });
     assert.ok(crashed, `le processus a bien été tué au renommage ${crashAt}`);
     assert.ok(fs.existsSync(path.join(dir, 'samples-commit.json')), 'le marqueur est resté sur disque');
